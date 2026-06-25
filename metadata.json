@@ -1,0 +1,6 @@
+{
+  "name": "Chronicle Core",
+  "description": "Premium full-stack Studio Pad with Client-Side Encryption, Doodle Canvas, MS Word-style ribbon, and Daily Comic Book Compiler.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
