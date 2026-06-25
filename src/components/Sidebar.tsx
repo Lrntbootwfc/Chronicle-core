@@ -1,6 +1,10 @@
 import React, { useState } from "react";
-import { Folder, File, ShieldAlert, Lock, Unlock, ChevronDown, ChevronRight, Edit2, Trash2, Plus, Scissors, Clipboard, LogOut, Download, Sliders, Palette, Type, Users, Menu, X } from "lucide-react";
+import { Folder, File, Lock, Unlock, ChevronDown, ChevronRight, Edit2, Trash2, Plus, Scissors, Clipboard, LogOut, Download, Palette, Users, Menu, X } from "lucide-react";
 import { JournalNode, JournalFolder, JournalFile, Personalization } from "../types";
+
+const isLightTheme = (wallpaper: string): boolean => {
+  return ["light", "minimalist", "blossom", "lavender", "meadow", "linen"].includes(wallpaper);
+};
 
 interface SidebarProps {
   vFileSystem: JournalNode[];
@@ -106,12 +110,14 @@ export default function Sidebar({
             {/* Folder element */}
             <div
               className={`flex items-center justify-between px-2 py-1.5 rounded-lg transition-all text-sm group ${
-                folder.isLocked ? "bg-red-950/10 hover:bg-red-950/20 border border-red-900/10" : "hover:bg-zinc-900 text-slate-300"
+                folder.isLocked 
+                  ? (isLight ? "bg-red-100/50 hover:bg-red-100 border border-red-200 text-red-700" : "bg-red-950/10 hover:bg-red-950/20 border border-red-900/10")
+                  : (isLight ? "hover:bg-stone-200 text-stone-800" : "hover:bg-zinc-900 text-slate-300")
               }`}
             >
               <div className="flex items-center gap-2 cursor-pointer flex-1 min-w-0" onClick={() => toggleFolder(folder.id)}>
                 {isOpen ? <ChevronDown className="w-3.5 h-3.5 text-slate-500" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-500" />}
-                <Folder className={`w-4 h-4 shrink-0 ${folder.isLocked ? "text-red-400" : "text-amber-400"}`} />
+                <Folder className={`w-4 h-4 shrink-0 ${folder.isLocked ? "text-red-500" : "text-amber-500"}`} />
                 <span className="truncate font-medium">
                   {folder.isLocked ? "🔒 Locked Folder" : folder.name}
                 </span>
@@ -121,10 +127,10 @@ export default function Sidebar({
               <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity ml-1 shrink-0">
                 {!folder.isLocked && (
                   <>
-                    <button onClick={() => onAddFile(folder.id)} title="Add File" className="p-1 rounded text-slate-400 hover:text-orange-400 hover:bg-zinc-800">
+                    <button onClick={() => onAddFile(folder.id)} title="Add File" className="p-1 rounded text-slate-400 hover:text-pink-400 hover:bg-zinc-800">
                       <Plus className="w-3 h-3" />
                     </button>
-                    <button onClick={() => onAddFolder(folder.id)} title="Add Sub-Folder" className="p-1 rounded text-slate-400 hover:text-amber-400 hover:bg-zinc-800 font-mono text-[10px] leading-none px-1">
+                    <button onClick={() => onAddFolder(folder.id)} title="Add Sub-Folder" className="p-1 rounded text-slate-400 hover:text-pink-400 hover:bg-zinc-800 font-mono text-[10px] leading-none px-1">
                       +F
                     </button>
                   </>
@@ -178,8 +184,8 @@ export default function Sidebar({
             key={file.id}
             className={`flex items-center justify-between px-2 py-1 rounded-lg text-xs group select-none transition-all ${
               isActive
-                ? "bg-orange-500/10 border border-orange-500/20 text-orange-400 font-semibold"
-                : "text-slate-400 hover:bg-zinc-900/60 hover:text-slate-200"
+                ? "bg-pink-500/15 border border-pink-500/25 text-pink-500 font-bold"
+                : (isLight ? "text-stone-600 hover:bg-pink-50 hover:text-pink-700" : "text-slate-400 hover:bg-zinc-900/60 hover:text-slate-200")
             }`}
           >
             <div className="flex items-center gap-2 cursor-pointer flex-1 min-w-0" onClick={() => onSelectFile(file.id)}>
@@ -214,25 +220,32 @@ export default function Sidebar({
   };
 
   if (collapsed) {
+    const isLight = isLightTheme(personalization.outerWallpaper);
     return (
-      <div className="w-16 bg-zinc-950 border-r border-zinc-900 flex flex-col items-center py-4 h-full shrink-0 select-none text-slate-300">
+      <div className={`w-16 flex flex-col items-center py-4 h-full shrink-0 select-none transition-all duration-300 ${
+        isLight ? "bg-white/70 backdrop-blur-xl border-r border-pink-100 text-stone-800" : "bg-zinc-950/70 backdrop-blur-xl border-r border-pink-950/20 text-slate-300"
+      }`}>
         <button
           onClick={onToggleCollapsed}
           title="Expand Sidebar Navigation"
-          className="p-2 mb-6 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-orange-400 hover:text-orange-300 transition-all cursor-pointer"
+          className={`p-2 mb-6 rounded-lg transition-all cursor-pointer ${
+            isLight ? "bg-pink-100 hover:bg-pink-200 text-pink-600" : "bg-zinc-900 hover:bg-zinc-800 text-pink-400 hover:text-pink-300"
+          }`}
         >
           <Menu className="w-5 h-5" />
         </button>
 
         <div className="flex-1 flex flex-col gap-4 items-center">
-          <div className="w-8 h-8 rounded-lg bg-orange-500 flex items-center justify-center font-display font-bold text-black text-xs shadow-lg shadow-orange-500/10">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-pink-500 to-rose-400 flex items-center justify-center font-display font-bold text-white text-xs shadow-lg shadow-pink-500/20">
             C
           </div>
 
           <button
             onClick={() => onAddFolder()}
             title="Create Root Folder"
-            className="p-2 rounded bg-zinc-900 hover:bg-zinc-800 text-slate-300 hover:text-orange-400 shrink-0 cursor-pointer"
+            className={`p-2 rounded shrink-0 cursor-pointer ${
+              isLight ? "bg-pink-50 hover:bg-pink-100 text-pink-750" : "bg-zinc-900 hover:bg-zinc-800 text-slate-300 hover:text-pink-400"
+            }`}
           >
             <Plus className="w-4 h-4" />
           </button>
@@ -241,7 +254,7 @@ export default function Sidebar({
         <button
           onClick={onLogout}
           title="Terminate Vault Session"
-          className="p-2.5 rounded-lg text-red-400 hover:text-red-300 hover:bg-red-950/20 transition-colors cursor-pointer shrink-0"
+          className="p-2.5 rounded-lg text-red-500 hover:text-red-600 hover:bg-red-500/10 transition-colors cursor-pointer shrink-0"
         >
           <LogOut className="w-4 h-4" />
         </button>
@@ -249,48 +262,70 @@ export default function Sidebar({
     );
   }
 
+  const isLight = isLightTheme(personalization.outerWallpaper);
+
   return (
-    <div className="w-80 bg-zinc-950 border-r border-zinc-900 flex flex-col h-full shrink-0 select-none text-slate-300">
+    <div className={`w-80 flex flex-col h-full shrink-0 select-none transition-all duration-300 ${
+      isLight ? "bg-white/70 backdrop-blur-xl border-r border-pink-100 text-stone-800" : "bg-zinc-950/70 backdrop-blur-xl border-r border-pink-950/20 text-slate-300"
+    }`}>
       {/* Brand Header */}
-      <div className="p-5 border-b border-zinc-900 flex items-center justify-between">
+      <div className={`p-5 flex items-center justify-between border-b ${
+        isLight ? "border-pink-100/50" : "border-pink-950/20"
+      }`}>
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-orange-500 flex items-center justify-center font-display font-bold text-black text-base shadow-lg shadow-orange-500/10">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-tr from-pink-500 to-rose-400 flex items-center justify-center font-display font-bold text-white text-base shadow-lg shadow-pink-500/20">
             C
           </div>
           <div>
-            <span className="font-display font-bold text-sm tracking-tight text-white block">Chronicle Core</span>
-            <span className="text-[10px] font-mono text-slate-500 uppercase tracking-widest block">Studio Workspace</span>
+            <span className={`font-display font-bold text-sm tracking-tight block ${
+              isLight ? "text-stone-900" : "text-white"
+            }`}>Comic Diary</span>
+            <span className={`text-[10px] font-mono uppercase tracking-widest block ${
+              isLight ? "text-stone-500" : "text-slate-500"
+            }`}>Studio Workspace</span>
           </div>
         </div>
 
         <button
           onClick={onToggleCollapsed}
           title="Collapse Sidebar"
-          className="p-1.5 rounded-lg hover:bg-zinc-900 text-slate-400 hover:text-white transition-all cursor-pointer"
+          className={`p-1.5 rounded-lg transition-all cursor-pointer ${
+            isLight ? "hover:bg-stone-200 text-stone-500 hover:text-stone-950" : "hover:bg-zinc-900 text-slate-400 hover:text-white"
+          }`}
         >
           <X className="w-4 h-4" />
         </button>
       </div>
 
       {/* Aesthetic Options Dashboard */}
-      <div className="p-4 border-b border-zinc-900/60 bg-zinc-950/40 space-y-3.5">
-        <div className="flex items-center gap-1.5 text-xs text-orange-400 font-mono uppercase tracking-widest font-semibold">
+      <div className={`p-4 space-y-3.5 border-b ${
+        isLight ? "bg-pink-100/10 border-pink-100/30" : "bg-zinc-950/40 border-pink-950/10"
+      }`}>
+        <div className="flex items-center gap-1.5 text-xs text-pink-500 font-mono uppercase tracking-widest font-semibold">
           <Palette className="w-3.5 h-3.5" /> Workspace Aesthetics
         </div>
 
         {/* Wallpaper Picker */}
         <div className="space-y-1">
-          <label className="text-[10px] font-mono font-medium text-slate-500 uppercase">
+          <label className={`text-[10px] font-mono font-medium uppercase ${
+            isLight ? "text-stone-500" : "text-slate-500"
+          }`}>
             Workspace Wallpaper
           </label>
           <select
             value={personalization.outerWallpaper}
             onChange={(e) => onUpdatePersonalization({ outerWallpaper: e.target.value })}
-            className="w-full bg-zinc-900 border border-zinc-800 rounded-lg text-xs py-2 px-2.5 outline-none focus:border-orange-500"
+            className={`w-full rounded-lg text-xs py-2 px-2.5 outline-none focus:border-pink-500 ${
+              isLight ? "bg-stone-100 border border-stone-200 text-stone-900" : "bg-zinc-900 border border-zinc-800 text-slate-300"
+            }`}
           >
             <optgroup label="Signature Canvas Themes">
-              <option value="chai-code">Orange Matte Accent</option>
+              <option value="sparks-code">Retro Code Orange</option>
               <option value="futuristic">Neo-Futuristic Quantum</option>
+            </optgroup>
+            <optgroup label="Standard Modes">
+              <option value="light">Classic Light Mode ☀️</option>
+              <option value="dark">Classic Dark Mode 🌙</option>
             </optgroup>
             <optgroup label="Core Textures">
               <option value="wood">Reclaimed Wood Grain 🪵</option>
@@ -318,8 +353,17 @@ export default function Sidebar({
           <select
             value={personalization.padStyle}
             onChange={(e) => onUpdatePersonalization({ padStyle: e.target.value })}
-            className="w-full bg-zinc-900 border border-zinc-800 rounded-lg text-xs py-2 px-2.5 outline-none focus:border-orange-500"
+            className={`w-full rounded-lg text-xs py-2 px-2.5 outline-none focus:border-pink-500 ${
+              isLight ? "bg-stone-100 border border-stone-200 text-stone-900" : "bg-zinc-900 border border-zinc-800 text-slate-300"
+            }`}
           >
+            <optgroup label="Aesthetic Textured Sheets 🎨">
+              <option value="cherry-blossom-pad">🌸 Pink Cherry Blossom Pad</option>
+              <option value="sketch-journal-pad">📖 Retro Comic Sketch Grid</option>
+              <option value="neon-grid-pad">⚡ Cyber Neon Slate</option>
+              <option value="starry-night-pad">🌌 Starry Nebula Pad</option>
+              <option value="vintage-manuscript">📜 Vintage Manuscript Parchment</option>
+            </optgroup>
             <optgroup label="Classic Sheets">
               <option value="clean-white">Pristine Sheet (Plain White)</option>
               <option value="legal-yellow">Rules Pad (Legal Yellow Margins)</option>
@@ -354,18 +398,18 @@ export default function Sidebar({
           <button
             onClick={() => onAddFolder()}
             title="Create Root Folder"
-            className="p-1 rounded bg-zinc-900 hover:bg-zinc-800 text-slate-300 hover:text-orange-400"
+            className="p-1 rounded bg-zinc-900/60 hover:bg-zinc-800 text-slate-300 hover:text-pink-400"
           >
             <Plus className="w-3.5 h-3.5" />
           </button>
         </div>
 
         {clipboardNode && (
-          <div className="p-2 rounded-lg bg-orange-500/5 border border-orange-500/25 flex items-center justify-between text-[11px] text-orange-400 font-mono">
+          <div className="p-2 rounded-lg bg-pink-500/5 border border-pink-500/25 flex items-center justify-between text-[11px] text-pink-400 font-mono">
             <span className="truncate flex items-center gap-1.5">
               <Scissors className="w-3 h-3 shrink-0" /> Moving: {clipboardNode.name}
             </span>
-            <span className="shrink-0 text-[10px] bg-orange-500/10 px-1.5 py-0.5 rounded">Cut state</span>
+            <span className="shrink-0 text-[10px] bg-pink-500/10 px-1.5 py-0.5 rounded">Cut state</span>
           </div>
         )}
 
@@ -381,8 +425,10 @@ export default function Sidebar({
       </div>
 
       {/* Character Profiles Tab System */}
-      <div className="p-4 border-t border-zinc-900 bg-zinc-950/50 space-y-2">
-        <div className="flex items-center gap-1.5 text-xs text-orange-400 font-mono uppercase tracking-widest font-semibold">
+      <div className={`p-4 border-t space-y-2 ${
+        isLight ? "border-pink-100/40 bg-pink-500/5" : "border-zinc-900 bg-zinc-950/50"
+      }`}>
+        <div className="flex items-center gap-1.5 text-xs text-pink-500 font-mono uppercase tracking-widest font-semibold">
           <Users className="w-3.5 h-3.5" /> Character Alignments
         </div>
 
@@ -394,8 +440,8 @@ export default function Sidebar({
               onClick={() => setActiveProfileTab(tab)}
               className={`py-1 text-[9px] font-mono font-semibold rounded uppercase tracking-wider text-center transition-all cursor-pointer ${
                 activeProfileTab === tab
-                  ? "bg-orange-500 text-black font-bold"
-                  : "bg-zinc-900 text-slate-500 hover:text-slate-300"
+                  ? "bg-pink-500 text-white font-bold"
+                  : (isLight ? "bg-pink-50 text-pink-700 hover:bg-pink-100/80" : "bg-zinc-900 text-slate-500 hover:text-slate-300")
               }`}
             >
               {tab === "self" ? "Self" : tab}
@@ -408,7 +454,9 @@ export default function Sidebar({
             value={personalization.avatarDesc || ""}
             onChange={(e) => onUpdatePersonalization({ avatarDesc: e.target.value })}
             placeholder="Describe yourself (hair, clothes, style) for 2D illustration fidelity..."
-            className="w-full h-18 bg-zinc-900 border border-zinc-800 rounded-lg text-[10px] p-2 resize-none outline-none focus:border-orange-500 placeholder-zinc-700 text-slate-300 font-sans"
+            className={`w-full h-18 rounded-lg text-[10px] p-2 resize-none outline-none focus:border-pink-500 font-sans ${
+              isLight ? "bg-pink-50 border border-pink-100 text-stone-800 placeholder-pink-400" : "bg-zinc-900 border border-zinc-800 text-slate-300 placeholder-zinc-700"
+            }`}
           />
         )}
 
@@ -417,7 +465,9 @@ export default function Sidebar({
             value={personalization.fatherDesc || ""}
             onChange={(e) => onUpdatePersonalization({ fatherDesc: e.target.value })}
             placeholder="Describe your father character (tall, beard, sweater, glasses)..."
-            className="w-full h-18 bg-zinc-900 border border-zinc-800 rounded-lg text-[10px] p-2 resize-none outline-none focus:border-orange-500 placeholder-zinc-700 text-slate-300 font-sans"
+            className={`w-full h-18 rounded-lg text-[10px] p-2 resize-none outline-none focus:border-pink-500 font-sans ${
+              isLight ? "bg-pink-50 border border-pink-100 text-stone-800 placeholder-pink-400" : "bg-zinc-900 border border-zinc-800 text-slate-300 placeholder-zinc-700"
+            }`}
           />
         )}
 
@@ -426,7 +476,9 @@ export default function Sidebar({
             value={personalization.motherDesc || ""}
             onChange={(e) => onUpdatePersonalization({ motherDesc: e.target.value })}
             placeholder="Describe your mother character (kind eyes, scarf, hair style)..."
-            className="w-full h-18 bg-zinc-900 border border-zinc-800 rounded-lg text-[10px] p-2 resize-none outline-none focus:border-orange-500 placeholder-zinc-700 text-slate-300 font-sans"
+            className={`w-full h-18 rounded-lg text-[10px] p-2 resize-none outline-none focus:border-pink-500 font-sans ${
+              isLight ? "bg-pink-50 border border-pink-100 text-stone-800 placeholder-pink-400" : "bg-zinc-900 border border-zinc-800 text-slate-300 placeholder-zinc-700"
+            }`}
           />
         )}
 
@@ -435,18 +487,22 @@ export default function Sidebar({
             value={personalization.othersDesc || ""}
             onChange={(e) => onUpdatePersonalization({ othersDesc: e.target.value })}
             placeholder="Describe other recurring characters or background guidelines..."
-            className="w-full h-18 bg-zinc-900 border border-zinc-800 rounded-lg text-[10px] p-2 resize-none outline-none focus:border-orange-500 placeholder-zinc-700 text-slate-300 font-sans"
+            className={`w-full h-18 rounded-lg text-[10px] p-2 resize-none outline-none focus:border-pink-500 font-sans ${
+              isLight ? "bg-pink-50 border border-pink-100 text-stone-800 placeholder-pink-400" : "bg-zinc-900 border border-zinc-800 text-slate-300 placeholder-zinc-700"
+            }`}
           />
         )}
       </div>
 
       {/* User Session Footer */}
-      <div className="p-4 border-t border-zinc-900 bg-zinc-950 flex items-center justify-between text-xs text-slate-500 font-mono">
+      <div className={`p-4 border-t flex items-center justify-between text-xs font-mono ${
+        isLight ? "border-stone-200 bg-stone-100 text-stone-600" : "border-zinc-900 bg-zinc-950 text-slate-500"
+      }`}>
         <span className="truncate">Unsealed: {username || "Admin"}</span>
         <button
           onClick={onLogout}
           title="Terminate Vault Session"
-          className="flex items-center gap-1.5 text-red-400 hover:text-red-300 transition-colors font-medium shrink-0 cursor-pointer"
+          className="flex items-center gap-1.5 text-red-500 hover:text-red-600 transition-colors font-medium shrink-0 cursor-pointer"
         >
           <LogOut className="w-3.5 h-3.5" />
           Logout

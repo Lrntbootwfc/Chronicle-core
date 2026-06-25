@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Send, MessageSquare, Phone, Mail, User, Sparkles, Share2, Shield, Heart, HelpCircle, CheckCheck } from "lucide-react";
+import { Send, MessageSquare, Phone, Mail, Share2, Shield, CheckCheck } from "lucide-react";
 import { Personalization, JournalNode, JournalFile, JournalFolder } from "../types";
 
 interface Message {
@@ -44,7 +44,7 @@ export default function Messenger({ personalization, vFileSystem, onUpdatePerson
                 id: "f1",
                 sender: "father",
                 senderName: "Father",
-                text: "Hey, just read your latest comic sketch. Keep writing, it's looking like a masterpiece! How's your chronicle journal progress?",
+                text: "Hey, just read your latest comic sketch. Keep writing, it's looking like a masterpiece! How's your comic diary progress?",
                 timestamp: "6/25/2026, 8:30 AM"
             }
         ],
@@ -61,7 +61,7 @@ export default function Messenger({ personalization, vFileSystem, onUpdatePerson
             {
                 id: "w1",
                 sender: "writers",
-                senderName: "Chronicle Writers Guild",
+                senderName: "Comic Writers Guild",
                 text: "Welcome to the unsealed workspace node! Here we share raw ideas, doodles, and prompt configurations.",
                 timestamp: "6/25/2026, 7:15 AM"
             }
@@ -130,7 +130,7 @@ export default function Messenger({ personalization, vFileSystem, onUpdatePerson
                     ? `I'm proud of you! As per my avatar description "${personalization.motherDesc}", I am always cheering you on in your entries.`
                     : `That is delightful to hear! Be sure to add my character guidelines so we can generate cohesive visual panels together in the Daily illustrator.`;
             } else {
-                senderName = "Chronicle Writers Guild";
+                senderName = "Comic Writers Guild";
                 replyText = "Great entry update! Sharing and storing these records in our decentralized vault indices secures the storyline timeline.";
             }
 
@@ -174,7 +174,7 @@ export default function Messenger({ personalization, vFileSystem, onUpdatePerson
                 id: "msg_reply_" + Date.now(),
                 sender: activeChannel,
                 senderName: activeChannel === "bot" ? "Quantum AI Assistant" : activeChannel === "father" ? "Father" : activeChannel === "mother" ? "Mother" : "Guild Bot",
-                text: `Secure ledger node shared. Verified log block integrity for "${file.name}". This adds invaluable weight to our comic chronicle sequence!`,
+                text: `Secure ledger node shared. Verified log block integrity for "${file.name}". This adds invaluable weight to our comic sequence!`,
                 timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
             };
             setConversations((prev) => ({
@@ -186,15 +186,20 @@ export default function Messenger({ personalization, vFileSystem, onUpdatePerson
 
     const currentChannelMessages = conversations[activeChannel] || [];
 
+    const isLight = ["light", "minimalist", "blossom", "lavender", "meadow", "linen"].includes(personalization.outerWallpaper);
+
     return (
-        <div className="h-full flex flex-col md:flex-row bg-[#03050c] overflow-hidden text-slate-100">
+        <div className={`h-full flex flex-col md:flex-row bg-transparent overflow-hidden ${isLight ? "text-stone-850" : "text-slate-100"}`}>
             {/* 1. SECURE MESSENGER SIDEBAR */}
-            <div className="w-full md:w-80 border-b md:border-b-0 md:border-r border-zinc-900 bg-zinc-950/80 flex flex-col shrink-0">
-                <div className="p-4 border-b border-zinc-900 space-y-2">
-                    <div className="flex items-center gap-2 text-orange-400 font-mono text-xs uppercase tracking-widest font-bold">
+            <div className={`w-full md:w-80 border-b md:border-b-0 md:border-r flex flex-col shrink-0 transition-colors ${isLight
+                    ? "bg-white/60 backdrop-blur-md border-pink-100"
+                    : "bg-zinc-950/60 backdrop-blur-md border-zinc-900"
+                }`}>
+                <div className={`p-4 border-b space-y-2 ${isLight ? "border-pink-100" : "border-zinc-900"}`}>
+                    <div className={`flex items-center gap-2 font-mono text-xs uppercase tracking-widest font-bold ${isLight ? "text-pink-600" : "text-pink-400"}`}>
                         <Shield className="w-3.5 h-3.5" /> Secure Messenger Channels
                     </div>
-                    <p className="text-[10px] text-slate-500">
+                    <p className={`text-[10px] ${isLight ? "text-stone-500" : "text-slate-500"}`}>
                         Communicate with your family and AI models to keep alignment with the diary sequence.
                     </p>
                 </div>
@@ -203,24 +208,28 @@ export default function Messenger({ personalization, vFileSystem, onUpdatePerson
                 <div className="flex-1 overflow-y-auto p-3.5 space-y-1.5">
                     <button
                         onClick={() => setActiveChannel("bot")}
-                        className={`w-full flex items-center justify-between p-3 rounded-xl text-left transition-all cursor-pointer ${activeChannel === "bot" ? "bg-orange-500/10 border border-orange-500/20 text-orange-400" : "hover:bg-zinc-900 text-slate-400"
+                        className={`w-full flex items-center justify-between p-3 rounded-xl text-left transition-all cursor-pointer border ${activeChannel === "bot"
+                                ? (isLight ? "bg-pink-100/80 border-pink-200 text-pink-750" : "bg-pink-500/10 border-pink-500/20 text-pink-400")
+                                : (isLight ? "bg-transparent border-transparent hover:bg-pink-50/50 text-stone-600" : "bg-transparent border-transparent hover:bg-zinc-900 text-slate-400")
                             }`}
                     >
                         <div className="flex items-center gap-3 min-w-0">
-                            <div className="w-8 h-8 rounded-lg bg-orange-500/20 flex items-center justify-center text-orange-400 text-xs font-mono">
+                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center text-xs font-mono ${isLight ? "bg-pink-100 text-pink-700" : "bg-pink-500/20 text-pink-400"}`}>
                                 🤖
                             </div>
                             <div className="truncate">
-                                <span className="block text-xs font-semibold text-white">Quantum AI Assistant</span>
-                                <span className="block text-[9px] font-mono opacity-60">System Core unsealed</span>
+                                <span className={`block text-xs font-semibold ${isLight ? "text-stone-900" : "text-white"}`}>Quantum AI Assistant</span>
+                                <span className={`block text-[9px] font-mono opacity-60 ${isLight ? "text-stone-500" : "text-slate-500"}`}>System Core unsealed</span>
                             </div>
                         </div>
-                        <span className="w-2 h-2 rounded-full bg-emerald-400 glow-active shrink-0 ml-1" />
+                        <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0 ml-1" />
                     </button>
 
                     <button
                         onClick={() => setActiveChannel("father")}
-                        className={`w-full flex items-center justify-between p-3 rounded-xl text-left transition-all cursor-pointer ${activeChannel === "father" ? "bg-orange-500/10 border border-orange-500/20 text-orange-400" : "hover:bg-zinc-900 text-slate-400"
+                        className={`w-full flex items-center justify-between p-3 rounded-xl text-left transition-all cursor-pointer border ${activeChannel === "father"
+                                ? (isLight ? "bg-pink-100/80 border-pink-200 text-pink-750" : "bg-pink-500/10 border-pink-500/20 text-pink-400")
+                                : (isLight ? "bg-transparent border-transparent hover:bg-pink-50/50 text-stone-600" : "bg-transparent border-transparent hover:bg-zinc-900 text-slate-400")
                             }`}
                     >
                         <div className="flex items-center gap-3 min-w-0">
@@ -228,8 +237,8 @@ export default function Messenger({ personalization, vFileSystem, onUpdatePerson
                                 👨
                             </div>
                             <div className="truncate">
-                                <span className="block text-xs font-semibold text-white">Father</span>
-                                <span className="block text-[9px] font-mono opacity-60">
+                                <span className={`block text-xs font-semibold ${isLight ? "text-stone-900" : "text-white"}`}>Father</span>
+                                <span className={`block text-[9px] font-mono opacity-60 ${isLight ? "text-stone-500" : "text-slate-500"}`}>
                                     {personalization.fatherDesc ? "Guidelines saved" : "Awaiting profile setup"}
                                 </span>
                             </div>
@@ -238,7 +247,9 @@ export default function Messenger({ personalization, vFileSystem, onUpdatePerson
 
                     <button
                         onClick={() => setActiveChannel("mother")}
-                        className={`w-full flex items-center justify-between p-3 rounded-xl text-left transition-all cursor-pointer ${activeChannel === "mother" ? "bg-orange-500/10 border border-orange-500/20 text-orange-400" : "hover:bg-zinc-900 text-slate-400"
+                        className={`w-full flex items-center justify-between p-3 rounded-xl text-left transition-all cursor-pointer border ${activeChannel === "mother"
+                                ? (isLight ? "bg-pink-100/80 border-pink-200 text-pink-750" : "bg-pink-500/10 border-pink-500/20 text-pink-400")
+                                : (isLight ? "bg-transparent border-transparent hover:bg-pink-50/50 text-stone-600" : "bg-transparent border-transparent hover:bg-zinc-900 text-slate-400")
                             }`}
                     >
                         <div className="flex items-center gap-3 min-w-0">
@@ -246,8 +257,8 @@ export default function Messenger({ personalization, vFileSystem, onUpdatePerson
                                 👩
                             </div>
                             <div className="truncate">
-                                <span className="block text-xs font-semibold text-white">Mother</span>
-                                <span className="block text-[9px] font-mono opacity-60">
+                                <span className={`block text-xs font-semibold ${isLight ? "text-stone-900" : "text-white"}`}>Mother</span>
+                                <span className={`block text-[9px] font-mono opacity-60 ${isLight ? "text-stone-500" : "text-slate-500"}`}>
                                     {personalization.motherDesc ? "Guidelines saved" : "Awaiting profile setup"}
                                 </span>
                             </div>
@@ -256,7 +267,9 @@ export default function Messenger({ personalization, vFileSystem, onUpdatePerson
 
                     <button
                         onClick={() => setActiveChannel("writers")}
-                        className={`w-full flex items-center justify-between p-3 rounded-xl text-left transition-all cursor-pointer ${activeChannel === "writers" ? "bg-orange-500/10 border border-orange-500/20 text-orange-400" : "hover:bg-zinc-900 text-slate-400"
+                        className={`w-full flex items-center justify-between p-3 rounded-xl text-left transition-all cursor-pointer border ${activeChannel === "writers"
+                                ? (isLight ? "bg-pink-100/80 border-pink-200 text-pink-750" : "bg-pink-500/10 border-pink-500/20 text-pink-400")
+                                : (isLight ? "bg-transparent border-transparent hover:bg-pink-50/50 text-stone-600" : "bg-transparent border-transparent hover:bg-zinc-900 text-slate-400")
                             }`}
                     >
                         <div className="flex items-center gap-3 min-w-0">
@@ -264,21 +277,21 @@ export default function Messenger({ personalization, vFileSystem, onUpdatePerson
                                 ✍️
                             </div>
                             <div className="truncate">
-                                <span className="block text-xs font-semibold text-white">Chronicle Guild</span>
-                                <span className="block text-[9px] font-mono opacity-60">Decentralized peer node</span>
+                                <span className={`block text-xs font-semibold ${isLight ? "text-stone-900" : "text-white"}`}>Comic Guild</span>
+                                <span className={`block text-[9px] font-mono opacity-60 ${isLight ? "text-stone-500" : "text-slate-500"}`}>Decentralized peer node</span>
                             </div>
                         </div>
                     </button>
                 </div>
 
                 {/* Verification Credentials Anchor */}
-                <div className="p-4 border-t border-zinc-900 space-y-3 bg-zinc-950/40">
-                    <div className="text-[10px] font-mono text-orange-400 uppercase tracking-wider font-semibold">
+                <div className={`p-4 border-t space-y-3 ${isLight ? "bg-pink-100/20 border-pink-100" : "bg-zinc-950/40 border-zinc-900"}`}>
+                    <div className={`text-[10px] font-mono uppercase tracking-wider font-semibold ${isLight ? "text-pink-600" : "text-pink-400"}`}>
                         Secure Sign-In Anchors
                     </div>
 
                     <div className="space-y-1.5">
-                        <label className="text-[9px] font-mono text-slate-500 uppercase">Linked Phone Verification</label>
+                        <label className={`text-[9px] font-mono uppercase ${isLight ? "text-stone-500" : "text-slate-500"}`}>Linked Phone Verification</label>
                         <div className="relative">
                             <Phone className="absolute left-2.5 top-2 w-3 h-3 text-slate-500" />
                             <input
@@ -286,13 +299,16 @@ export default function Messenger({ personalization, vFileSystem, onUpdatePerson
                                 value={phoneInput}
                                 onChange={(e) => setPhoneInput(e.target.value)}
                                 placeholder="+1 (555) 019-2831"
-                                className="w-full bg-zinc-900 border border-zinc-800 rounded-lg text-[10px] pl-8 pr-2 py-1.5 outline-none focus:border-orange-500 text-slate-300 font-mono"
+                                className={`w-full rounded-lg text-[10px] pl-8 pr-2 py-1.5 outline-none font-mono ${isLight
+                                        ? "bg-white border border-pink-100 text-stone-800 placeholder-stone-400 focus:border-pink-500"
+                                        : "bg-zinc-900 border border-zinc-800 text-slate-300 placeholder-zinc-750 focus:border-pink-500"
+                                    }`}
                             />
                         </div>
                     </div>
 
                     <div className="space-y-1.5">
-                        <label className="text-[9px] font-mono text-slate-500 uppercase">Gmail Address Anchor</label>
+                        <label className={`text-[9px] font-mono uppercase ${isLight ? "text-stone-500" : "text-slate-500"}`}>Gmail Address Anchor</label>
                         <div className="relative">
                             <Mail className="absolute left-2.5 top-2 w-3 h-3 text-slate-500" />
                             <input
@@ -300,7 +316,10 @@ export default function Messenger({ personalization, vFileSystem, onUpdatePerson
                                 value={emailInput}
                                 onChange={(e) => setEmailInput(e.target.value)}
                                 placeholder="identity@gmail.com"
-                                className="w-full bg-zinc-900 border border-zinc-800 rounded-lg text-[10px] pl-8 pr-2 py-1.5 outline-none focus:border-orange-500 text-slate-300 font-mono"
+                                className={`w-full rounded-lg text-[10px] pl-8 pr-2 py-1.5 outline-none font-mono ${isLight
+                                        ? "bg-white border border-pink-100 text-stone-800 placeholder-stone-400 focus:border-pink-500"
+                                        : "bg-zinc-900 border border-zinc-800 text-slate-300 placeholder-zinc-750 focus:border-pink-500"
+                                    }`}
                             />
                         </div>
                     </div>
@@ -308,7 +327,10 @@ export default function Messenger({ personalization, vFileSystem, onUpdatePerson
                     <button
                         onClick={handleLinkIdentities}
                         disabled={isLinking}
-                        className="w-full py-1.5 bg-zinc-900 hover:bg-zinc-800 text-slate-300 text-[10px] font-mono uppercase tracking-widest rounded-lg border border-zinc-800 font-bold cursor-pointer flex items-center justify-center gap-1.5"
+                        className={`w-full py-1.5 text-[10px] font-mono uppercase tracking-widest rounded-lg border font-bold cursor-pointer flex items-center justify-center gap-1.5 ${isLight
+                                ? "bg-pink-100 hover:bg-pink-200 text-pink-700 border-pink-200"
+                                : "bg-zinc-900 hover:bg-zinc-800 text-slate-300 border-zinc-850"
+                            }`}
                     >
                         {isLinking ? "Anchored..." : "Save Identity Anchors"}
                     </button>
@@ -316,19 +338,19 @@ export default function Messenger({ personalization, vFileSystem, onUpdatePerson
             </div>
 
             {/* 2. MAIN ACTIVE CONVERSATION CONTEXT */}
-            <div className="flex-1 flex flex-col h-full overflow-hidden bg-[#070911]">
+            <div className={`flex-1 flex flex-col h-full overflow-hidden ${isLight ? "bg-white/40" : "bg-[#070911]/60"}`}>
                 {/* Active Header */}
-                <div className="bg-zinc-950 border-b border-zinc-900 px-6 py-4 flex items-center justify-between shrink-0">
+                <div className={`border-b px-6 py-4 flex items-center justify-between shrink-0 ${isLight ? "bg-white/60 border-pink-100" : "bg-zinc-950/60 border-zinc-900"}`}>
                     <div>
-                        <h3 className="font-display font-semibold text-sm text-white">
-                            {activeChannel === "bot" ? "Quantum AI Assistant" : activeChannel === "father" ? "Father" : activeChannel === "mother" ? "Mother" : "Chronicle Guild Group"}
+                        <h3 className={`font-display font-semibold text-sm ${isLight ? "text-stone-900" : "text-white"}`}>
+                            {activeChannel === "bot" ? "Quantum AI Assistant" : activeChannel === "father" ? "Father" : activeChannel === "mother" ? "Mother" : "Comic Guild Group"}
                         </h3>
-                        <p className="text-[10px] font-mono text-slate-500 uppercase tracking-wider">
+                        <p className={`text-[10px] font-mono uppercase tracking-wider ${isLight ? "text-stone-500" : "text-slate-500"}`}>
                             Channel Stream secure • Decrypting End-to-End
                         </p>
                     </div>
 
-                    <div className="text-[9px] font-mono bg-zinc-900 text-orange-400 px-2.5 py-1 rounded border border-zinc-800">
+                    <div className={`text-[9px] font-mono px-2.5 py-1 rounded border ${isLight ? "bg-pink-50 border-pink-100 text-pink-600" : "bg-zinc-900 border-zinc-800 text-pink-400"}`}>
                         UID: {username || "anonymous_vault"}
                     </div>
                 </div>
@@ -342,13 +364,16 @@ export default function Messenger({ personalization, vFileSystem, onUpdatePerson
                                 <span className="text-[10px] font-mono text-slate-500">{msg.senderName}</span>
                                 <div
                                     className={`max-w-md p-3.5 rounded-2xl text-xs leading-relaxed space-y-2 ${isMe
-                                            ? "bg-orange-500 text-black font-medium rounded-tr-none shadow-lg shadow-orange-500/5"
-                                            : "bg-zinc-900 text-slate-200 rounded-tl-none border border-zinc-800/60"
+                                            ? "bg-pink-500 text-white font-medium rounded-tr-none shadow-lg shadow-pink-500/15"
+                                            : (isLight ? "bg-white text-stone-850 rounded-tl-none border border-pink-100 shadow-sm" : "bg-zinc-900 text-slate-200 rounded-tl-none border border-zinc-800/60")
                                         }`}
                                 >
                                     <p>{msg.text}</p>
                                     {msg.sharedLog && (
-                                        <div className={`p-3 rounded-lg border text-[10px] leading-relaxed mt-2 ${isMe ? "bg-black/10 border-black/20 text-zinc-900" : "bg-black/35 border-zinc-800/80 text-slate-300"}`}>
+                                        <div className={`p-3 rounded-lg border text-[10px] leading-relaxed mt-2 ${isMe
+                                                ? "bg-black/10 border-black/20 text-zinc-900"
+                                                : (isLight ? "bg-pink-50/50 border-pink-100 text-stone-700" : "bg-black/35 border-zinc-800/80 text-slate-300")
+                                            }`}>
                                             <div className="font-bold flex items-center gap-1.5 uppercase font-mono tracking-wide mb-1">
                                                 <Share2 className="w-3 h-3" /> Shared Journal: {msg.sharedLog.name}
                                             </div>
@@ -358,17 +383,17 @@ export default function Messenger({ personalization, vFileSystem, onUpdatePerson
                                 </div>
                                 <div className="flex items-center gap-1 text-[9px] font-mono text-slate-600">
                                     <span>{msg.timestamp}</span>
-                                    {isMe && <CheckCheck className="w-3.5 h-3.5 text-orange-400/80" />}
+                                    {isMe && <CheckCheck className="w-3.5 h-3.5 text-pink-500/80" />}
                                 </div>
                             </div>
                         );
                     })}
                 </div>
 
-                {/* 3. QUICK CHAI JOURNAL SHARING FLAP */}
+                {/* 3. QUICK JOURNAL SHARING FLAP */}
                 {filesList.length > 0 && (
-                    <div className="bg-zinc-950/70 border-t border-zinc-900 px-4 py-2 flex items-center gap-2 overflow-x-auto shrink-0 select-none">
-                        <span className="text-[10px] font-mono text-slate-500 uppercase tracking-wider shrink-0 mr-1.5">
+                    <div className={`border-t px-4 py-2 flex items-center gap-2 overflow-x-auto shrink-0 select-none ${isLight ? "bg-white/50 border-pink-100" : "bg-zinc-950/70 border-zinc-900"}`}>
+                        <span className={`text-[10px] font-mono uppercase tracking-wider shrink-0 mr-1.5 ${isLight ? "text-stone-500" : "text-slate-500"}`}>
                             Quick Share Node:
                         </span>
                         {filesList.map((file) => (
@@ -376,7 +401,10 @@ export default function Messenger({ personalization, vFileSystem, onUpdatePerson
                                 key={file.id}
                                 onClick={() => handleShareLog(file)}
                                 title={`Share "${file.name}" to this channel`}
-                                className="px-2.5 py-1 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded text-[10px] font-mono text-orange-400 hover:text-orange-300 cursor-pointer shrink-0"
+                                className={`px-2.5 py-1 rounded text-[10px] font-mono cursor-pointer shrink-0 border ${isLight
+                                        ? "bg-pink-50 hover:bg-pink-100 border-pink-100 text-pink-600"
+                                        : "bg-zinc-900 hover:bg-zinc-800 border-zinc-800 text-pink-400 hover:text-pink-300"
+                                    }`}
                             >
                                 + Share {file.name}
                             </button>
@@ -385,18 +413,21 @@ export default function Messenger({ personalization, vFileSystem, onUpdatePerson
                 )}
 
                 {/* Message Input Box */}
-                <div className="p-4 bg-zinc-950 border-t border-zinc-900 flex items-center gap-3 shrink-0">
+                <div className={`p-4 border-t flex items-center gap-3 shrink-0 ${isLight ? "bg-white/60 border-pink-100" : "bg-zinc-950 border-zinc-900"}`}>
                     <input
                         type="text"
                         value={inputText}
                         onChange={(e) => setInputText(e.target.value)}
                         onKeyDown={(e) => e.key === "Enter" && handleSendMessage()}
                         placeholder={`Send cryptographically signed message to ${activeChannel}...`}
-                        className="flex-1 bg-zinc-900 border border-zinc-800 rounded-xl py-3 px-4 text-xs text-slate-200 placeholder-zinc-700 outline-none focus:border-orange-500"
+                        className={`flex-1 rounded-xl py-3 px-4 text-xs outline-none focus:border-pink-500/50 ${isLight
+                                ? "bg-stone-50 border border-pink-100 text-stone-850 placeholder-stone-400"
+                                : "bg-zinc-900 border border-zinc-800 text-slate-200 placeholder-zinc-700"
+                            }`}
                     />
                     <button
                         onClick={handleSendMessage}
-                        className="w-10 h-10 rounded-xl bg-orange-500 hover:bg-orange-600 text-black flex items-center justify-center transition-all shadow-md shadow-orange-500/10 cursor-pointer shrink-0"
+                        className="w-10 h-10 rounded-xl bg-pink-500 hover:bg-pink-600 text-white flex items-center justify-center transition-all shadow-md shadow-pink-500/10 cursor-pointer shrink-0"
                     >
                         <Send className="w-4 h-4" />
                     </button>

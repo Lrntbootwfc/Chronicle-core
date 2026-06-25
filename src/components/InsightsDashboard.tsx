@@ -1,7 +1,7 @@
 import React from "react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
-  LineChart, Line, Legend, AreaChart, Area, CartesianGrid
+  AreaChart, Area
 } from "recharts";
 import { JournalFile } from "../types";
 import { Sparkles, TrendingUp, Calendar, CloudSun, Smile } from "lucide-react";

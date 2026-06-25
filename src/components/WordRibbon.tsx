@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import {
-  Type, Bold, Italic, Underline, Strikethrough, AlignLeft, AlignCenter, AlignRight, AlignJustify,
-  List, ListOrdered, Clipboard, Code, Quote, RefreshCw, Layout, Sliders, Play, Settings, FileCode, CheckSquare, Sparkles, Smile, Laptop, Shield
+  Bold, Italic, Underline, Strikethrough, AlignLeft, AlignCenter, AlignRight, AlignJustify,
+  List, ListOrdered, Clipboard, Code, Quote, Sliders, Sparkles, Smile
 } from "lucide-react";
 import { Personalization } from "../types";
 

@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import { jsPDF } from "jspdf";
 import confetti from "canvas-confetti";
-import { Download, Sparkles, BookOpen, Layers, ShieldAlert, CheckCircle } from "lucide-react";
+import { Download, Sparkles, BookOpen, Layers, CheckCircle } from "lucide-react";
 import { JournalFile } from "../types";
 
 interface ComicStudioProps {

@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect } from "react";
-import { Paintbrush, Eraser, Trash2, CheckCircle, Sparkles, Download, ArrowUpRight } from "lucide-react";
+import { Paintbrush, Eraser, Trash2, CheckCircle, Sparkles } from "lucide-react";
 
 interface DoodleCanvasProps {
   onSaveDoodle: (base64: string) => void;

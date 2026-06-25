@@ -2,9 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import CryptoJS from "crypto-js";
 import { motion, AnimatePresence } from "motion/react";
 import {
-  BookOpen, Shield, Sparkles, Feather, Image as ImageIcon, FileText, ArrowRight,
-  Plus, Search, Calendar, FolderPlus, Settings, PieChart, Users, Lock, Unlock,
-  HelpCircle, ImagePlus, CheckCircle, RefreshCw, Layers, Sliders, Layout, Minimize2, Edit, ChevronRight, Menu, MessageSquare
+  BookOpen, Image as ImageIcon, Search, ImagePlus, RefreshCw, Sparkles
 } from "lucide-react";
 
 import { Sticker, JournalFile, JournalFolder, JournalNode, Personalization } from "./types";
@@ -17,6 +15,31 @@ import InsightsDashboard from "./components/InsightsDashboard";
 import ComicStudio from "./components/ComicStudio";
 import Messenger from "./components/Messenger";
 import { API_BASE_URL } from "./config";
+
+// File system recursive operations
+const findNodeRecursive = (nodes: JournalNode[], id: string): JournalNode | null => {
+  for (let node of nodes) {
+    if (node.id === id) return node;
+    if (node.type === "folder" && node.children) {
+      const found = findNodeRecursive(node.children, id);
+      if (found) return found;
+    }
+  }
+  return null;
+};
+
+const removeNodeRecursive = (nodes: JournalNode[], id: string): JournalNode | null => {
+  for (let i = 0; i < nodes.length; i++) {
+    if (nodes[i].id === id) {
+      return nodes.splice(i, 1)[0];
+    }
+    if (nodes[i].type === "folder" && (nodes[i] as JournalFolder).children) {
+      const found = removeNodeRecursive((nodes[i] as JournalFolder).children, id);
+      if (found) return found;
+    }
+  }
+  return null;
+};
 
 export default function App() {
   // Routes: "landing" | "auth" | "workspace"
@@ -40,8 +63,8 @@ export default function App() {
   // Theme settings and profile personalization
   const [personalization, setPersonalization] = useState<Personalization>({
     theme: "slate-minimalist",
-    outerWallpaper: "futuristic",
-    padStyle: "clean-white",
+    outerWallpaper: "blossom",
+    padStyle: "cherry-blossom-pad",
     typography: "-apple-system, sans-serif",
     margins: "60px 55px",
     lineSpacing: "1.5",
@@ -55,6 +78,32 @@ export default function App() {
     emailAnchor: ""
   });
 
+  // Check for cached user session on mount
+  useEffect(() => {
+    const cachedUser = localStorage.getItem("comic_diary_username");
+    const cachedTree = localStorage.getItem("comic_diary_fs_tree");
+    const cachedPersonalization = localStorage.getItem("comic_diary_personalization");
+
+    if (cachedUser) {
+      setUsername(cachedUser);
+      if (cachedTree) {
+        try {
+          setVFileSystem(JSON.parse(cachedTree));
+        } catch (e) {
+          console.error("Failed to parse cached file tree", e);
+        }
+      }
+      if (cachedPersonalization) {
+        try {
+          setPersonalization(JSON.parse(cachedPersonalization));
+        } catch (e) {
+          console.error("Failed to parse cached personalization", e);
+        }
+      }
+      setRoute("workspace");
+    }
+  }, []);
+
   // Editor states
   const [showWhiteboard, setShowWhiteboard] = useState(false);
   const [isMarkdownMode, setIsMarkdownMode] = useState(false);
@@ -64,10 +113,31 @@ export default function App() {
   const [dashboardSearchQuery, setDashboardSearchQuery] = useState("");
 
   const editorRef = useRef<HTMLDivElement | null>(null);
+  const lastLoadedFileIdRef = useRef<string | null>(null);
 
-  // Sync state changes with the server
+  const currentFile = currentFileId ? (findNodeRecursive(vFileSystem, currentFileId) as JournalFile) : null;
+
+  // Synchronize editor innerHTML safely when selected file changes or unlocks.
+  // We avoid resetting innerHTML while the user is typing so cursor caret selection is preserved.
+  useEffect(() => {
+    if (editorRef.current && currentFile) {
+      const activeContent = getActiveFileContent(currentFile);
+      const isLocked = currentFile.isLocked && !decryptedMemStore[currentFile.id];
+      const trackerKey = `${currentFile.id}_${isLocked ? "locked" : "unlocked"}`;
+      
+      if (lastLoadedFileIdRef.current !== trackerKey) {
+        editorRef.current.innerHTML = activeContent;
+        lastLoadedFileIdRef.current = trackerKey;
+      }
+    } else {
+      lastLoadedFileIdRef.current = null;
+    }
+  }, [currentFileId, decryptedMemStore, currentFile]);
+
+  // Sync state changes with the server and cache in localStorage
   const syncWithServer = async (updatedFS: JournalNode[], updatedAvatar?: string) => {
     if (!username) return;
+    localStorage.setItem("comic_diary_fs_tree", JSON.stringify(updatedFS));
     try {
       await fetch(`${API_BASE_URL}/api/save`, {
         method: "POST",
@@ -87,8 +157,15 @@ export default function App() {
   const handleLoginSuccess = (data: { username: string; fs_tree: any[]; avatar_desc: string }) => {
     setUsername(data.username);
     setVFileSystem(data.fs_tree || []);
+    localStorage.setItem("comic_diary_username", data.username);
+    localStorage.setItem("comic_diary_fs_tree", JSON.stringify(data.fs_tree || []));
+
     if (data.avatar_desc) {
-      setPersonalization(prev => ({ ...prev, avatarDesc: data.avatar_desc }));
+      setPersonalization(prev => {
+        const next = { ...prev, avatarDesc: data.avatar_desc };
+        localStorage.setItem("comic_diary_personalization", JSON.stringify(next));
+        return next;
+      });
     }
     setRoute("workspace");
     setCurrentTab("dashboard");
@@ -98,11 +175,22 @@ export default function App() {
   const handleUpdatePersonalization = (updates: Partial<Personalization>) => {
     setPersonalization((prev) => {
       const next = { ...prev, ...updates };
+      localStorage.setItem("comic_diary_personalization", JSON.stringify(next));
       if (updates.avatarDesc !== undefined) {
         syncWithServer(vFileSystem, updates.avatarDesc);
       }
       return next;
     });
+  };
+
+  const handleLogout = () => {
+    setUsername("");
+    setVFileSystem([]);
+    setDecryptedMemStore({});
+    localStorage.removeItem("comic_diary_username");
+    localStorage.removeItem("comic_diary_fs_tree");
+    localStorage.removeItem("comic_diary_personalization");
+    setRoute("landing");
   };
 
   // Execute MS Word Rich text commands
@@ -148,30 +236,7 @@ export default function App() {
     return file.content || "";
   };
 
-  // File system recursive operations
-  const findNodeRecursive = (nodes: JournalNode[], id: string): JournalNode | null => {
-    for (let node of nodes) {
-      if (node.id === id) return node;
-      if (node.type === "folder" && node.children) {
-        const found = findNodeRecursive(node.children, id);
-        if (found) return found;
-      }
-    }
-    return null;
-  };
-
-  const removeNodeRecursive = (nodes: JournalNode[], id: string): JournalNode | null => {
-    for (let i = 0; i < nodes.length; i++) {
-      if (nodes[i].id === id) {
-        return nodes.splice(i, 1)[0];
-      }
-      if (nodes[i].type === "folder" && (nodes[i] as JournalFolder).children) {
-        const found = removeNodeRecursive((nodes[i] as JournalFolder).children, id);
-        if (found) return found;
-      }
-    }
-    return null;
-  };
+  // Helpers migrated to top-level module scope to avoid hoisting errors
 
   // Select node to write / edit
   const handleSelectFile = (id: string) => {
@@ -582,10 +647,10 @@ export default function App() {
 
   // Wallpaper themes mapped
   const wallpaperThemes: Record<string, string> = {
-    "chai-code": "bg-[#0b0d0e]",
+    "sparks-code": "bg-[#0e0702]",
     "futuristic": "bg-[#03050d]",
-    "dark": "bg-[#121214]",
-    "light": "bg-[#f8f9fa]",
+    "dark": "bg-[#09090b]",
+    "light": "bg-[#f5f5f4]",
     "minimalist": "bg-[#ffffff]",
     "wood": "bg-[url('https://images.unsplash.com/photo-1541123437800-1bb1317badc2?q=80&width=1600')] bg-cover bg-center bg-no-repeat bg-fixed",
     "meadow": "bg-[url('https://images.unsplash.com/photo-1533038590840-1cde6e668a91?q=80&width=1600')] bg-cover bg-center bg-no-repeat bg-fixed",
@@ -601,6 +666,11 @@ export default function App() {
   };
 
   const padPrintStyles: Record<string, string> = {
+    "cherry-blossom-pad": "bg-[#fff0f3] bg-[url('https://images.unsplash.com/photo-1522748906645-95d8adfd52c7?q=80&width=800')] bg-cover bg-blend-overlay text-zinc-800 border-none shadow-2xl",
+    "sketch-journal-pad": "bg-[#faf6f0] bg-[radial-gradient(#cbd5e1_1.5px,transparent_1.5px)] bg-blend-multiply [background-size:20px_20px] text-zinc-900 border-l-4 border-orange-400 shadow-2xl",
+    "neon-grid-pad": "bg-[#0d0915] bg-[linear-gradient(to_right,#1f122e_1px,transparent_1px),linear-gradient(to_bottom,#1f122e_1px,transparent_1px)] [background-size:24px_24px] text-pink-400 font-mono border-l border-pink-500 shadow-2xl",
+    "starry-night-pad": "bg-[#090b14] bg-[url('https://images.unsplash.com/photo-1506318137071-a8e063b4bec0?q=80&width=800')] bg-cover bg-blend-soft-light text-indigo-100 font-sans border-none shadow-inner shadow-2xl",
+    "vintage-manuscript": "bg-[#faf4e8] bg-[url('https://images.unsplash.com/photo-1587080266227-677cd237c267?q=80&width=800')] bg-cover bg-blend-multiply text-stone-900 font-serif border-none shadow-2xl",
     "clean-white": "bg-white text-zinc-900 border-none shadow-2xl shadow-black/15",
     "legal-yellow": "bg-[#fefeb3] text-black border-l-4 border-red-400 shadow-xl shadow-amber-500/5",
     "parchment": "bg-[#f4ecc8] text-[#4a3319] border-none shadow-2xl font-serif",
@@ -617,10 +687,10 @@ export default function App() {
     "monochrome-noir": "bg-black text-white border border-zinc-800 shadow-2xl shadow-white/5",
   };
 
-  const currentFile = currentFileId ? (findNodeRecursive(vFileSystem, currentFileId) as JournalFile) : null;
+  const isLight = ["light", "minimalist", "blossom", "lavender", "meadow", "linen"].includes(personalization.outerWallpaper);
 
   return (
-    <div className="h-screen w-screen flex overflow-hidden bg-[#090b0d] text-slate-100 font-sans selection:bg-orange-500 selection:text-white">
+    <div className="h-screen w-screen flex overflow-hidden bg-[#1a0c12] text-slate-100 font-sans selection:bg-pink-500 selection:text-white">
       <AnimatePresence mode="wait">
         {route === "landing" && (
           <LandingPage onEnterApp={() => setRoute("auth")} />
@@ -631,7 +701,7 @@ export default function App() {
         )}
 
         {route === "workspace" && (
-          <div className="flex h-full w-full overflow-hidden">
+          <div className={`flex h-full w-full overflow-hidden ${wallpaperThemes[personalization.outerWallpaper] || "bg-[#1a0c12]"} transition-all duration-300`}>
             
             {/* Sidebar navigation Tree */}
             <Sidebar
@@ -650,35 +720,36 @@ export default function App() {
               onUnlockNode={handleUnlockNode}
               onUpdatePersonalization={handleUpdatePersonalization}
               onExportFolderBook={handleExportPDF}
-              onLogout={() => setRoute("landing")}
+              onLogout={handleLogout}
               collapsed={sidebarCollapsed}
               onToggleCollapsed={() => setSidebarCollapsed(!sidebarCollapsed)}
               username={username}
             />
 
             {/* Main Application deck */}
-            <div className="flex-1 flex flex-col h-full overflow-hidden bg-zinc-950">
+            <div className={`flex-1 flex flex-col h-full overflow-hidden transition-all duration-300 ${
+              isLight ? "bg-white/40 text-stone-900" : "bg-black/45 text-slate-100"
+            }`}>
               
               {/* App bar tab triggers */}
-              <div className="bg-zinc-950 border-b border-zinc-900 px-6 py-3.5 flex items-center justify-between shrink-0">
+              <div className={`border-b transition-all duration-300 px-6 py-3.5 flex items-center justify-between shrink-0 ${
+                isLight 
+                  ? "bg-white/60 backdrop-blur-md border-pink-100/50 text-stone-800" 
+                  : "bg-black/50 backdrop-blur-md border-pink-950/20 text-slate-100"
+              }`}>
                 <div className="flex items-center gap-2">
-                  {sidebarCollapsed && (
-                    <button
-                      onClick={() => setSidebarCollapsed(false)}
-                      className="p-2 mr-2 bg-zinc-900 rounded-lg hover:bg-zinc-800 text-orange-400 hover:text-orange-300 transition-all cursor-pointer"
-                      title="Expand Sidebar"
-                    >
-                      <Menu className="w-4 h-4" />
-                    </button>
-                  )}
                   {(["dashboard", "editor", "comic-book", "insights", "communications"] as const).map((tab) => (
                     <button
                       key={tab}
                       onClick={() => setCurrentTab(tab)}
                       className={`px-4 py-2 text-xs font-semibold rounded-lg capitalize transition-all cursor-pointer ${
                         currentTab === tab
-                          ? "bg-orange-500 text-black shadow-lg shadow-orange-500/15"
-                          : "text-slate-400 hover:bg-zinc-900/60 hover:text-slate-200"
+                          ? "bg-pink-500 text-white shadow-lg shadow-pink-500/15"
+                          : `transition-colors ${
+                              isLight 
+                                ? "text-stone-500 hover:bg-stone-200/50 hover:text-stone-800" 
+                                : "text-slate-400 hover:bg-zinc-900/60 hover:text-slate-200"
+                            }`
                       }`}
                     >
                       {tab === "comic-book" ? "Comic compiler" : tab === "communications" ? "Messenger 💬" : tab}
@@ -692,51 +763,97 @@ export default function App() {
               </div>
 
               {/* TAB SLIDES */}
-              <div className="flex-1 overflow-y-auto min-h-0 bg-[#090b0c]">
+              <div className="flex-1 overflow-y-auto min-h-0 bg-transparent">
                 
                 {/* 1. DASHBOARD OVERVIEW */}
                 {currentTab === "dashboard" && (
                   <div className="p-8 max-w-5xl mx-auto space-y-8">
                     <div className="space-y-2">
-                      <h2 className="font-display font-bold text-2xl text-white">Security Ledger Workspace</h2>
-                      <p className="text-sm text-slate-500">Unsealed cryptographic journal feeds and folder navigation widgets.</p>
+                      <h2 className={`font-display font-bold text-2xl ${isLight ? "text-stone-900" : "text-white"}`}>Comic Diary Secure Workspace</h2>
+                      <p className={`text-sm ${isLight ? "text-stone-600" : "text-slate-400"}`}>Unsealed cryptographic journal feeds and folder navigation widgets.</p>
                     </div>
 
                     {/* Search */}
                     <div className="relative max-w-md w-full">
-                      <Search className="absolute left-3.5 top-3.5 w-4 h-4 text-slate-500" />
+                      <Search className={`absolute left-3.5 top-3.5 w-4 h-4 ${isLight ? "text-stone-400" : "text-slate-500"}`} />
                       <input
                         type="text"
                         value={dashboardSearchQuery}
                         onChange={(e) => setDashboardSearchQuery(e.target.value)}
                         placeholder="Search decrypted entries index..."
-                        className="w-full bg-zinc-950/60 border border-zinc-900 rounded-xl py-3 pl-10 pr-4 text-xs text-slate-300 placeholder-zinc-700 outline-none focus:border-orange-500/50"
+                        className={`w-full border rounded-xl py-3 pl-10 pr-4 text-xs outline-none focus:border-pink-500/50 transition-colors ${
+                          isLight 
+                            ? "bg-white/80 border-pink-100 text-stone-900 placeholder-stone-400" 
+                            : "bg-zinc-950/60 border-zinc-900 text-slate-300 placeholder-zinc-700"
+                        }`}
                       />
                     </div>
+
+                    {/* WhatsApp Hidden Easter Egg Card */}
+                    {(dashboardSearchQuery.toLowerCase() === "secret-about" || dashboardSearchQuery.toLowerCase() === "comic-secret") && (
+                      <div className="p-6 rounded-2xl border-2 border-dashed border-pink-500 bg-[#120a16] shadow-2xl shadow-pink-500/10 space-y-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xl">💥</span>
+                            <h4 className="font-display font-extrabold text-sm text-pink-400 uppercase tracking-wider">SECRET DIARY ABOUT SECTION UNSEALED</h4>
+                          </div>
+                          <span className="px-2 py-0.5 text-[9px] font-mono bg-pink-500 text-black font-extrabold rounded">WHATSAPP HIDDEN MODE ACTIVE</span>
+                        </div>
+                        
+                        <div className="text-xs text-slate-300 space-y-3 font-sans leading-relaxed">
+                          <p>
+                            Welcome, Author! You have unsealed the <strong>Comic Diary</strong> system manual using the cryptographic search word.
+                          </p>
+                          
+                          <div className="p-4 bg-black/40 rounded-xl border border-pink-500/20 font-mono text-[11px] text-pink-300 space-y-2">
+                            <div className="font-bold uppercase tracking-wider">🔒 Client-Side AES-256 Vault Architecture:</div>
+                            <p>• Your logs are encrypted inside your browser before sending them or storing them. Only your unique key can read them.</p>
+                            <p>• <strong>Persistent Sessions:</strong> You remain logged in securely across refreshes. Logout clears all cache memory.</p>
+                            <p>• <strong>Immutable Folders:</strong> Locked items stay locked on disk. Decrypted previews exist solely in transient memory nodes.</p>
+                          </div>
+
+                          <div className="p-4 bg-black/40 rounded-xl border border-pink-500/20 font-mono text-[11px] text-pink-300 space-y-2">
+                            <div className="font-bold uppercase tracking-wider">🎨 Daily Comic Studio & Characters:</div>
+                            <p>• Configure character guidelines in the sidebar (Self, Father, Mother, Others).</p>
+                            <p>• Select drawing style and click "Illustrate" to automatically render 2D panel strips corresponding to your prose log!</p>
+                          </div>
+
+                          <p className="text-[10px] text-slate-500 italic">
+                            "To hide this ledger manual again, simply clear your search bar input. Write 'secret-about' or 'comic-secret' to unseal this manual any time."
+                          </p>
+                        </div>
+                      </div>
+                    )}
 
                     {/* Quick Feed */}
                     <div className="grid md:grid-cols-2 gap-6">
                       <div className="space-y-4">
-                        <h4 className="text-xs font-mono font-bold text-slate-500 uppercase tracking-widest">Recent Logs</h4>
+                        <h4 className={`text-xs font-mono font-bold uppercase tracking-widest ${isLight ? "text-stone-500" : "text-slate-400"}`}>Recent Logs</h4>
                         <div className="space-y-3">
                           {filteredSearchList.map((file) => (
                             <div
                               key={file.id}
                               onClick={() => handleSelectFile(file.id)}
-                              className="p-4 rounded-xl border border-zinc-900 bg-zinc-950/40 hover:bg-zinc-950 hover:border-zinc-800 transition-all cursor-pointer space-y-3"
+                              className={`p-4 rounded-xl border transition-all cursor-pointer space-y-3 ${
+                                isLight 
+                                  ? "bg-white/80 border-pink-100/60 hover:bg-white hover:border-pink-300 hover:shadow-lg hover:shadow-pink-500/5 text-stone-800" 
+                                  : "bg-zinc-950/40 border-pink-950/20 hover:bg-zinc-950 hover:border-pink-900/40 text-slate-300"
+                              }`}
                             >
-                              <div className="flex items-center justify-between text-[10px] font-mono text-slate-500">
+                              <div className={`flex items-center justify-between text-[10px] font-mono ${isLight ? "text-stone-500" : "text-slate-500"}`}>
                                 <span>Created: {file.created}</span>
-                                <span className="bg-zinc-900 px-2 py-0.5 rounded text-orange-400">{file.mood}</span>
+                                <span className={`px-2 py-0.5 rounded ${isLight ? "bg-pink-100 text-pink-700" : "bg-zinc-900 text-pink-400"}`}>{file.mood}</span>
                               </div>
-                              <h5 className="font-display font-bold text-sm text-white">{file.isLocked ? "🔒 Locked Entry" : file.name}</h5>
-                              <p className="text-xs text-slate-500 truncate leading-relaxed">
+                              <h5 className={`font-display font-bold text-sm ${isLight ? "text-stone-900" : "text-white"}`}>{file.isLocked ? "🔒 Locked Entry" : file.name}</h5>
+                              <p className={`text-xs truncate leading-relaxed ${isLight ? "text-stone-600" : "text-slate-400"}`}>
                                 {file.isLocked ? "Secure Block remains encrypted" : file.content.replace(/<[^>]*>/g, "")}
                               </p>
                             </div>
                           ))}
                           {filteredSearchList.length === 0 && (
-                            <div className="p-8 text-center border border-dashed border-zinc-900 rounded-2xl bg-zinc-950/20 text-xs text-slate-600 font-mono">
+                            <div className={`p-8 text-center border border-dashed rounded-2xl text-xs font-mono ${
+                              isLight ? "border-pink-200 bg-white/20 text-stone-500" : "border-zinc-900 bg-zinc-950/20 text-slate-600"
+                            }`}>
                               No entries found.
                             </div>
                           )}
@@ -745,16 +862,20 @@ export default function App() {
 
                       {/* Interactive calendar and folder summaries */}
                       <div className="space-y-4">
-                        <h4 className="text-xs font-mono font-bold text-slate-500 uppercase tracking-widest font-semibold">Calendar Index</h4>
-                        <div className="p-5 rounded-2xl border border-zinc-900 bg-zinc-950/80 space-y-3">
-                          <div className="flex items-center justify-between border-b border-zinc-900 pb-3">
-                            <span className="font-display font-bold text-sm text-white">June 2026</span>
-                            <span className="text-xs text-orange-400 font-mono">Real-time Clock</span>
+                        <h4 className={`text-xs font-mono font-bold uppercase tracking-widest ${isLight ? "text-stone-500" : "text-slate-400"}`}>Calendar Index</h4>
+                        <div className={`p-5 rounded-2xl border space-y-3 ${
+                          isLight 
+                            ? "bg-white/80 border-pink-100 text-stone-800 shadow-md shadow-pink-900/5" 
+                            : "bg-zinc-950/80 border-zinc-900 text-slate-200"
+                        }`}>
+                          <div className={`flex items-center justify-between border-b pb-3 ${isLight ? "border-pink-500/10" : "border-zinc-900"}`}>
+                            <span className={`font-display font-bold text-sm ${isLight ? "text-stone-900" : "text-white"}`}>June 2026</span>
+                            <span className="text-xs text-pink-500 font-mono">Real-time Clock</span>
                           </div>
                           {/* Calendar mock grid */}
-                          <div className="grid grid-cols-7 gap-2 text-center text-xs text-slate-500 font-mono">
+                          <div className={`grid grid-cols-7 gap-2 text-center text-xs font-mono ${isLight ? "text-stone-500" : "text-slate-500"}`}>
                             {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => (
-                              <span key={i} className="font-bold text-slate-600">{d}</span>
+                              <span key={i} className="font-bold">{d}</span>
                             ))}
                             {Array.from({ length: 30 }).map((_, i) => {
                               const day = i + 1;
@@ -763,7 +884,9 @@ export default function App() {
                                 <span
                                   key={i}
                                   className={`py-1.5 rounded-md ${
-                                    isToday ? "bg-orange-500 text-black font-bold" : "hover:bg-zinc-900 text-slate-400"
+                                    isToday 
+                                      ? "bg-pink-500 text-white font-bold shadow-md shadow-pink-500/30" 
+                                      : `hover:bg-pink-500/10 transition-colors ${isLight ? "text-stone-600 hover:text-pink-600" : "text-slate-400"}`
                                   }`}
                                 >
                                   {day}
@@ -899,7 +1022,6 @@ export default function App() {
                             id="editorEngine"
                             contentEditable={!isMarkdownMode}
                             onInput={handleEditorInput}
-                            dangerouslySetInnerHTML={{ __html: getActiveFileContent(currentFile) }}
                             style={{ minHeight: "450px" }}
                             className="outline-none text-base leading-relaxed whitespace-pre-wrap word-break"
                           />
