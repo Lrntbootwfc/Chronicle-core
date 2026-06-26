@@ -52,4 +52,5 @@ export interface Personalization {
   phoneAnchor?: string;
   emailAnchor?: string;
   glassOpacity?: number; // Frosted Glass Notepad Opacity level (10 - 100)
+  vaultPassword?: string; // Global Master Secure Vault Password
 }

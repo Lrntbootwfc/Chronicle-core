@@ -17,6 +17,7 @@ interface MediaItem {
     mood: string;
     characters: string[]; // Linked characters
     createdDate: string;
+    dateRead?: string; // date completed/read
 }
 
 interface MediaLedgerProps {
@@ -43,6 +44,9 @@ export default function MediaLedger({ personalization }: MediaLedgerProps) {
     const [newDetailedNotes, setNewDetailedNotes] = useState("");
     const [newMood, setNewMood] = useState("✨");
     const [newCharacters, setNewCharacters] = useState<string[]>([]);
+    const [newDateRead, setNewDateRead] = useState(() => {
+        return new Date().toISOString().split("T")[0];
+    });
 
     // List of pre-installed characters for mapping (or they can enter custom ones)
     const availableCharacters = ["Self", "Father", "Mother", "Best Friend", "Rival", "Mentor"];
@@ -77,7 +81,8 @@ export default function MediaLedger({ personalization }: MediaLedgerProps) {
                     detailedNotes: "The sound design was absolutely thunderous. Timothée Chalamet gives a haunting performance showing the tragic trap of prophecy. The black and white gladiatorial sequence is visually breathtaking.",
                     mood: "🤯",
                     characters: ["Self", "Mentor"],
-                    createdDate: new Date().toLocaleDateString()
+                    createdDate: new Date().toLocaleDateString(),
+                    dateRead: "2026-01-15"
                 },
                 {
                     id: "m_2",
@@ -91,7 +96,8 @@ export default function MediaLedger({ personalization }: MediaLedgerProps) {
                     detailedNotes: "Follows Sam and Sadie over 30 years as they become superstar video game developers. It captures the pure magic of game development, coding, and the complex tragedy of human friendship perfectly.",
                     mood: "🎨",
                     characters: ["Self", "Best Friend"],
-                    createdDate: new Date().toLocaleDateString()
+                    createdDate: new Date().toLocaleDateString(),
+                    dateRead: "2026-02-10"
                 }
             ];
             setItems(starterItems);
@@ -124,7 +130,8 @@ export default function MediaLedger({ personalization }: MediaLedgerProps) {
             detailedNotes: newDetailedNotes.trim(),
             mood: newMood,
             characters: newCharacters,
-            createdDate: new Date().toLocaleDateString()
+            createdDate: new Date().toLocaleDateString(),
+            dateRead: newDateRead || new Date().toISOString().split("T")[0]
         };
 
         const next = [newItem, ...items];
@@ -140,6 +147,7 @@ export default function MediaLedger({ personalization }: MediaLedgerProps) {
         setNewDetailedNotes("");
         setNewMood("✨");
         setNewCharacters([]);
+        setNewDateRead(new Date().toISOString().split("T")[0]);
         setShowAddForm(false);
     };
 
@@ -318,6 +326,19 @@ export default function MediaLedger({ personalization }: MediaLedgerProps) {
                                         }`}
                                 />
                             </div>
+
+                            {/* Date Read / Watched */}
+                            <div className="space-y-1">
+                                <label className={`text-[10px] font-mono uppercase font-bold ${isLight ? "text-stone-500" : "text-slate-500"}`}>When was this Read / Watched?</label>
+                                <input
+                                    type="date"
+                                    value={newDateRead}
+                                    onChange={(e) => setNewDateRead(e.target.value)}
+                                    className={`w-full text-xs rounded-xl py-2.5 px-3 outline-none border focus:border-pink-500/50 transition-colors ${isLight ? "bg-white border-pink-100 text-stone-900" : "bg-zinc-900/60 border-zinc-800 text-slate-300"
+                                        }`}
+                                    required
+                                />
+                            </div>
                         </div>
 
                         <div className="space-y-4">
@@ -449,108 +470,171 @@ export default function MediaLedger({ personalization }: MediaLedgerProps) {
                 </div>
             </div>
 
-            {/* Bento Grid layout */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                {filteredItems.map((item) => {
+            {/* Bento Grid layout sorted chronologically by month (January to December) */}
+            {(() => {
+                const MONTH_NAMES = [
+                    "January", "February", "March", "April", "May", "June",
+                    "July", "August", "September", "October", "November", "December"
+                ];
+
+                const formatDateNice = (dateStr?: string) => {
+                    if (!dateStr) return "Unknown Date";
+                    try {
+                        const d = new Date(dateStr + "T00:00:00");
+                        if (isNaN(d.getTime())) return dateStr;
+                        return d.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" });
+                    } catch (e) {
+                        return dateStr;
+                    }
+                };
+
+                const groupedByMonth: Record<string, MediaItem[]> = {};
+                MONTH_NAMES.forEach((m) => {
+                    groupedByMonth[m] = [];
+                });
+                groupedByMonth["Other Logs"] = [];
+
+                filteredItems.forEach((item) => {
+                    let monthName = "Other Logs";
+                    if (item.dateRead) {
+                        try {
+                            const d = new Date(item.dateRead + "T00:00:00");
+                            if (!isNaN(d.getTime())) {
+                                monthName = MONTH_NAMES[d.getMonth()];
+                            }
+                        } catch (e) { }
+                    }
+                    groupedByMonth[monthName].push(item);
+                });
+
+                const sortedMonthKeys = [
+                    ...MONTH_NAMES,
+                    "Other Logs"
+                ].filter((m) => groupedByMonth[m] && groupedByMonth[m].length > 0);
+
+                if (filteredItems.length === 0) {
                     return (
-                        <div
-                            key={item.id}
-                            onClick={() => setSelectedItem(item)}
-                            className={`group rounded-2xl overflow-hidden border cursor-pointer relative flex flex-col justify-between transition-all hover:-translate-y-1 hover:shadow-xl ${isLight
-                                    ? "bg-white border-pink-150/40 hover:border-pink-400 shadow-md shadow-pink-900/5 text-stone-800"
-                                    : "bg-zinc-950/40 border-zinc-900/60 hover:border-pink-900/40 text-slate-200"
-                                }`}
-                        >
-                            {/* Media type banner overlay */}
-                            <div className="absolute top-3 left-3 z-20 flex items-center gap-1.5 bg-black/75 backdrop-blur-md px-2.5 py-1 rounded-full border border-zinc-800/50">
-                                {item.type === "book" ? (
-                                    <BookOpen className="w-3 h-3 text-pink-400" />
-                                ) : (
-                                    <Film className="w-3 h-3 text-orange-400" />
-                                )}
-                                <span className="text-[9px] font-mono font-bold text-slate-200 uppercase tracking-widest">{item.type}</span>
-                            </div>
-
-                            {/* Delete button */}
-                            <button
-                                onClick={(e) => handleDeleteItem(item.id, e)}
-                                className="absolute top-3 right-3 z-20 p-1.5 rounded-full bg-black/60 hover:bg-red-500/20 hover:text-red-400 border border-zinc-800/40 text-slate-400 transition-colors"
-                                title="Remove entry"
-                            >
-                                <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-
-                            {/* Cover Artwork Header */}
-                            <div className="h-44 overflow-hidden relative bg-zinc-900 shrink-0">
-                                <img
-                                    src={item.coverUrl}
-                                    alt={item.title}
-                                    referrerPolicy="no-referrer"
-                                    className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500 opacity-80"
-                                />
-                                <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent" />
-
-                                {/* Title and year Overlay */}
-                                <div className="absolute bottom-3 left-4 right-4 text-left">
-                                    <span className="text-[10px] font-mono text-pink-400 font-bold">{item.year}</span>
-                                    <h4 className="font-display font-black text-sm text-white tracking-tight line-clamp-1 group-hover:text-pink-400 transition-colors">
-                                        {item.title}
-                                    </h4>
-                                </div>
-                            </div>
-
-                            {/* Body Details */}
-                            <div className="p-4 flex-1 flex flex-col justify-between space-y-3">
-                                <div className="space-y-1 text-left">
-                                    <div className="flex items-center gap-1 text-[11px] font-mono text-zinc-500">
-                                        <span>By:</span>
-                                        <span className="text-zinc-400 font-semibold truncate">{item.creator}</span>
-                                    </div>
-
-                                    <p className={`text-xs italic leading-relaxed line-clamp-2 ${isLight ? "text-stone-600" : "text-slate-400"
-                                        }`}>
-                                        "{item.oneLiner}"
-                                    </p>
-                                </div>
-
-                                {/* Rating stars, mood and tags footer */}
-                                <div className="flex items-center justify-between pt-3 border-t border-zinc-800/20 text-xs shrink-0">
-                                    <div className="flex items-center gap-0.5">
-                                        {Array.from({ length: 5 }).map((_, i) => (
-                                            <Star
-                                                key={i}
-                                                className={`w-3 h-3 ${i < item.rating
-                                                        ? "fill-amber-400 text-amber-400"
-                                                        : "text-zinc-700"
-                                                    }`}
-                                            />
-                                        ))}
-                                    </div>
-
-                                    <div className="flex items-center gap-2">
-                                        {item.characters.length > 0 && (
-                                            <span className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-zinc-800 text-slate-300">
-                                                👤 {item.characters[0]}
-                                            </span>
-                                        )}
-                                        <span className="w-6 h-6 rounded-lg bg-zinc-900 flex items-center justify-center text-xs">
-                                            {item.mood}
-                                        </span>
-                                    </div>
-                                </div>
-                            </div>
+                        <div className={`p-12 text-center col-span-full border border-dashed rounded-3xl text-xs font-mono ${isLight ? "border-pink-200 bg-white/30 text-stone-500" : "border-zinc-900 bg-zinc-950/20 text-slate-600"
+                            }`}>
+                            <BookOpen className="w-12 h-12 mx-auto text-zinc-800 mb-3" />
+                            No logged books or movies match your filter or search query.
                         </div>
                     );
-                })}
+                }
 
-                {filteredItems.length === 0 && (
-                    <div className={`p-12 text-center col-span-full border border-dashed rounded-3xl text-xs font-mono ${isLight ? "border-pink-200 bg-white/30 text-stone-500" : "border-zinc-900 bg-zinc-950/20 text-slate-600"
-                        }`}>
-                        <BookOpen className="w-12 h-12 mx-auto text-zinc-800 mb-3" />
-                        No logged books or movies match your filter or search query.
+                return (
+                    <div className="space-y-12">
+                        {sortedMonthKeys.map((month) => (
+                            <div key={month} className="space-y-5 text-left">
+                                <div className="flex items-center gap-3 border-b border-zinc-800/20 pb-2">
+                                    <span className="text-lg font-black font-display text-white tracking-tight">{month} Logs</span>
+                                    <span className="text-[10px] font-mono bg-zinc-900 text-pink-400 px-2.5 py-0.5 rounded-full border border-zinc-800 font-bold">
+                                        {groupedByMonth[month].length} {groupedByMonth[month].length === 1 ? "Item" : "Items"}
+                                    </span>
+                                </div>
+
+                                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                                    {groupedByMonth[month].map((item) => (
+                                        <div
+                                            key={item.id}
+                                            onClick={() => setSelectedItem(item)}
+                                            className={`group rounded-2xl overflow-hidden border cursor-pointer relative flex flex-col justify-between transition-all hover:-translate-y-1 hover:shadow-xl ${isLight
+                                                    ? "bg-white border-pink-150/40 hover:border-pink-400 shadow-md shadow-pink-900/5 text-stone-800"
+                                                    : "bg-zinc-950/40 border-zinc-900/60 hover:border-pink-900/40 text-slate-200"
+                                                }`}
+                                        >
+                                            {/* Media type banner overlay */}
+                                            <div className="absolute top-3 left-3 z-20 flex items-center gap-1.5 bg-black/75 backdrop-blur-md px-2.5 py-1 rounded-full border border-zinc-800/50">
+                                                {item.type === "book" ? (
+                                                    <BookOpen className="w-3 h-3 text-pink-400" />
+                                                ) : (
+                                                    <Film className="w-3 h-3 text-orange-400" />
+                                                )}
+                                                <span className="text-[9px] font-mono font-bold text-slate-200 uppercase tracking-widest">{item.type}</span>
+                                            </div>
+
+                                            {/* Delete button */}
+                                            <button
+                                                onClick={(e) => handleDeleteItem(item.id, e)}
+                                                className="absolute top-3 right-3 z-20 p-1.5 rounded-full bg-black/60 hover:bg-red-500/20 hover:text-red-400 border border-zinc-800/40 text-slate-400 transition-colors"
+                                                title="Remove entry"
+                                            >
+                                                <Trash2 className="w-3.5 h-3.5" />
+                                            </button>
+
+                                            {/* Cover Artwork Header */}
+                                            <div className="h-44 overflow-hidden relative bg-zinc-900 shrink-0">
+                                                <img
+                                                    src={item.coverUrl}
+                                                    alt={item.title}
+                                                    referrerPolicy="no-referrer"
+                                                    className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-500 opacity-80"
+                                                />
+                                                <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/40 to-transparent" />
+
+                                                {/* Title and year Overlay */}
+                                                <div className="absolute bottom-3 left-4 right-4 text-left">
+                                                    <span className="text-[10px] font-mono text-pink-400 font-bold">{item.year}</span>
+                                                    <h4 className="font-display font-black text-sm text-white tracking-tight line-clamp-1 group-hover:text-pink-400 transition-colors">
+                                                        {item.title}
+                                                    </h4>
+                                                </div>
+                                            </div>
+
+                                            {/* Body Details */}
+                                            <div className="p-4 flex-1 flex flex-col justify-between space-y-3">
+                                                <div className="space-y-1 text-left">
+                                                    <div className="flex items-center gap-1 text-[11px] font-mono text-zinc-500">
+                                                        <span>By:</span>
+                                                        <span className="text-zinc-400 font-semibold truncate">{item.creator}</span>
+                                                    </div>
+
+                                                    {/* Date description */}
+                                                    <div className="flex items-center gap-1 text-[10px] font-mono text-emerald-400 font-semibold">
+                                                        <span>Completed:</span>
+                                                        <span>{formatDateNice(item.dateRead)}</span>
+                                                    </div>
+
+                                                    <p className={`text-xs italic leading-relaxed line-clamp-2 mt-1.5 ${isLight ? "text-stone-600" : "text-slate-400"
+                                                        }`}>
+                                                        "{item.oneLiner}"
+                                                    </p>
+                                                </div>
+
+                                                {/* Rating stars, mood and tags footer */}
+                                                <div className="flex items-center justify-between pt-3 border-t border-zinc-800/25 text-xs shrink-0">
+                                                    <div className="flex items-center gap-0.5">
+                                                        {Array.from({ length: 5 }).map((_, i) => (
+                                                            <Star
+                                                                key={i}
+                                                                className={`w-3 h-3 ${i < item.rating
+                                                                        ? "fill-amber-400 text-amber-400"
+                                                                        : "text-zinc-700"
+                                                                    }`}
+                                                            />
+                                                        ))}
+                                                    </div>
+
+                                                    <div className="flex items-center gap-2">
+                                                        {item.characters.length > 0 && (
+                                                            <span className="px-1.5 py-0.5 rounded text-[9px] font-mono bg-zinc-800 text-slate-300">
+                                                                👤 {item.characters[0]}
+                                                            </span>
+                                                        )}
+                                                        <span className="w-6 h-6 rounded-lg bg-zinc-900 flex items-center justify-center text-xs">
+                                                            {item.mood}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        ))}
                     </div>
-                )}
-            </div>
+                );
+            })()}
 
             {/* Details Lightbox Overlay Drawer */}
             {selectedItem && (
@@ -610,6 +694,14 @@ export default function MediaLedger({ personalization }: MediaLedgerProps) {
                                         ))}
                                         <span className="text-[10px] font-mono text-slate-500 uppercase font-bold ml-1">
                                             ({selectedItem.rating}/5 stars)
+                                        </span>
+                                    </div>
+
+                                    {/* Completed On read/watch date */}
+                                    <div className="flex items-center gap-1.5 text-xs">
+                                        <span className="text-[9px] font-mono uppercase text-zinc-500 font-bold">Completed On:</span>
+                                        <span className="text-xs font-mono font-bold text-emerald-400 bg-emerald-500/10 px-2.5 py-0.5 rounded border border-emerald-500/20">
+                                            {selectedItem.dateRead ? new Date(selectedItem.dateRead + "T00:00:00").toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }) : "Unknown Date"}
                                         </span>
                                     </div>
 
