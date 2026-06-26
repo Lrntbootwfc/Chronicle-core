@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import CryptoJS from "crypto-js";
 import { motion, AnimatePresence } from "motion/react";
 import {
-  BookOpen, Image as ImageIcon, Search, ImagePlus, RefreshCw, Sparkles
+  BookOpen, Image as ImageIcon, Search, ImagePlus, RefreshCw, Sparkles, Paintbrush, Undo, Redo, Users
 } from "lucide-react";
 
 import { Sticker, JournalFile, JournalFolder, JournalNode, Personalization } from "./types";
@@ -14,6 +14,7 @@ import DoodleCanvas from "./components/DoodleCanvas";
 import InsightsDashboard from "./components/InsightsDashboard";
 import ComicStudio from "./components/ComicStudio";
 import Messenger from "./components/Messenger";
+import MediaLedger from "./components/MediaLedger";
 import { API_BASE_URL } from "./config";
 
 // File system recursive operations
@@ -41,12 +42,16 @@ const removeNodeRecursive = (nodes: JournalNode[], id: string): JournalNode | nu
   return null;
 };
 
+const cloneFileSystem = (nodes: JournalNode[]): JournalNode[] => {
+  return JSON.parse(JSON.stringify(nodes));
+};
+
 export default function App() {
   // Routes: "landing" | "auth" | "workspace"
   const [route, setRoute] = useState<"landing" | "auth" | "workspace">("landing");
   
   // Tab View in protected workspace
-  const [currentTab, setCurrentTab] = useState<"dashboard" | "editor" | "comic-book" | "insights" | "communications">("dashboard");
+  const [currentTab, setCurrentTab] = useState<"dashboard" | "editor" | "comic-book" | "insights" | "communications" | "media-ledger">("dashboard");
 
   // Sidebar collapsed state
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -108,9 +113,15 @@ export default function App() {
   const [showWhiteboard, setShowWhiteboard] = useState(false);
   const [isMarkdownMode, setIsMarkdownMode] = useState(false);
   const [generatingComic, setGeneratingComic] = useState(false);
+  
+  // Custom states for unified canvas, media review tracker, and search bar unsealing
+  const [unsealedVaultIds, setUnsealedVaultIds] = useState<string[]>([]);
+  const [isDrawingModeActive, setIsDrawingModeActive] = useState(false);
+  const saveDebounceRef = useRef<any>(null);
 
   // Selected folder for dashboard quick-view
   const [dashboardSearchQuery, setDashboardSearchQuery] = useState("");
+  const [deletePendingId, setDeletePendingId] = useState<string | null>(null);
 
   const editorRef = useRef<HTMLDivElement | null>(null);
   const lastLoadedFileIdRef = useRef<string | null>(null);
@@ -121,12 +132,17 @@ export default function App() {
   // We avoid resetting innerHTML while the user is typing so cursor caret selection is preserved.
   useEffect(() => {
     if (editorRef.current && currentFile) {
-      const activeContent = getActiveFileContent(currentFile);
       const isLocked = currentFile.isLocked && !decryptedMemStore[currentFile.id];
       const trackerKey = `${currentFile.id}_${isLocked ? "locked" : "unlocked"}`;
       
       if (lastLoadedFileIdRef.current !== trackerKey) {
-        editorRef.current.innerHTML = activeContent;
+        // LAYER 3 REHYDRATION SHIELD: render cached content immediately
+        const cachedHTML = localStorage.getItem(`rehydrate_file_${currentFile.id}`);
+        if (cachedHTML && !isLocked) {
+          editorRef.current.innerHTML = cachedHTML;
+        } else {
+          editorRef.current.innerHTML = getActiveFileContent(currentFile);
+        }
         lastLoadedFileIdRef.current = trackerKey;
       }
     } else {
@@ -150,6 +166,344 @@ export default function App() {
       });
     } catch (e) {
       console.error("Permanence synchronization failed:", e);
+    }
+  };
+
+  // Canvas overlay drawing states & refs
+  const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const isDrawingRef = useRef(false);
+  const lastXRef = useRef(0);
+  const lastYRef = useRef(0);
+  const [brushColor, setBrushColor] = useState("#ec4899"); // default Pink-500 color
+  const [brushSize, setBrushSize] = useState(3);
+  const [isEraser, setIsEraser] = useState(false);
+  const [drawUndoStack, setDrawUndoStack] = useState<string[]>([]);
+  const [drawRedoStack, setDrawRedoStack] = useState<string[]>([]);
+
+  // Auto-resize overlay drawing canvas to perfectly envelope writing pad
+  const resizeCanvas = () => {
+    const pad = document.getElementById("journalPadSheet");
+    const canvas = overlayCanvasRef.current;
+    if (pad && canvas) {
+      const rect = pad.getBoundingClientRect();
+      canvas.width = rect.width;
+      canvas.height = rect.height;
+      
+      // Load saved doodle base64 path drawing state if it exists
+      if (currentFile && currentFile.canvasPaths) {
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          const img = new Image();
+          img.onload = () => {
+            ctx.drawImage(img, 0, 0, rect.width, rect.height);
+          };
+          img.src = currentFile.canvasPaths;
+        }
+      }
+    }
+  };
+
+  // Trigger canvas dimensions adjustment whenever active workspace changes
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      resizeCanvas();
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [currentFileId, currentTab, isDrawingModeActive]);
+
+  const saveCanvasPaths = () => {
+    const canvas = overlayCanvasRef.current;
+    if (!canvas || !currentFileId) return;
+    const dataUrl = canvas.toDataURL();
+
+    setDrawUndoStack((prev) => [...prev, currentFile?.canvasPaths || ""]);
+    setDrawRedoStack([]); // clear redo on new drawings
+
+    setVFileSystem((prev) => {
+      const updated = cloneFileSystem(prev);
+      const file = findNodeRecursive(updated, currentFileId) as JournalFile;
+      if (file) {
+        file.canvasPaths = dataUrl;
+      }
+      syncWithServer(updated);
+      return updated;
+    });
+  };
+
+  const handleDrawUndo = () => {
+    if (drawUndoStack.length === 0 || !currentFileId) return;
+    const canvas = overlayCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const previousState = drawUndoStack[drawUndoStack.length - 1];
+    setDrawUndoStack((prev) => prev.slice(0, -1));
+    setDrawRedoStack((prev) => [...prev, currentFile?.canvasPaths || ""]);
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (previousState && previousState !== "") {
+      const img = new Image();
+      img.onload = () => {
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      };
+      img.src = previousState;
+    }
+
+    setVFileSystem((prev) => {
+      const updated = cloneFileSystem(prev);
+      const file = findNodeRecursive(updated, currentFileId) as JournalFile;
+      if (file) {
+        file.canvasPaths = previousState;
+      }
+      syncWithServer(updated);
+      return updated;
+    });
+  };
+
+  const handleDrawRedo = () => {
+    if (drawRedoStack.length === 0 || !currentFileId) return;
+    const canvas = overlayCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const nextState = drawRedoStack[drawRedoStack.length - 1];
+    setDrawRedoStack((prev) => prev.slice(0, -1));
+    setDrawUndoStack((prev) => [...prev, currentFile?.canvasPaths || ""]);
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (nextState && nextState !== "") {
+      const img = new Image();
+      img.onload = () => {
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      };
+      img.src = nextState;
+    }
+
+    setVFileSystem((prev) => {
+      const updated = cloneFileSystem(prev);
+      const file = findNodeRecursive(updated, currentFileId) as JournalFile;
+      if (file) {
+        file.canvasPaths = nextState;
+      }
+      syncWithServer(updated);
+      return updated;
+    });
+  };
+
+  const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = overlayCanvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    
+    setDrawUndoStack((prev) => [...prev, currentFile?.canvasPaths || ""]);
+    
+    isDrawingRef.current = true;
+    lastXRef.current = e.clientX - rect.left;
+    lastYRef.current = e.clientY - rect.top;
+  };
+
+  const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!isDrawingRef.current) return;
+    const canvas = overlayCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const rect = canvas.getBoundingClientRect();
+
+    const currentX = e.clientX - rect.left;
+    const currentY = e.clientY - rect.top;
+
+    ctx.beginPath();
+    ctx.moveTo(lastXRef.current, lastYRef.current);
+    ctx.lineTo(currentX, currentY);
+    ctx.strokeStyle = isEraser ? "transparent" : brushColor;
+    
+    if (isEraser) {
+      ctx.globalCompositeOperation = "destination-out";
+      ctx.lineWidth = brushSize * 4;
+    } else {
+      ctx.globalCompositeOperation = "source-over";
+      ctx.strokeStyle = brushColor;
+      ctx.lineWidth = brushSize;
+    }
+    
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.stroke();
+
+    lastXRef.current = currentX;
+    lastYRef.current = currentY;
+  };
+
+  const handleCanvasMouseUp = () => {
+    if (isDrawingRef.current) {
+      isDrawingRef.current = false;
+      saveCanvasPaths();
+    }
+  };
+
+  const handleCanvasTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    if (e.touches.length !== 1) return;
+    const canvas = overlayCanvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const touch = e.touches[0];
+    
+    setDrawUndoStack((prev) => [...prev, currentFile?.canvasPaths || ""]);
+    
+    isDrawingRef.current = true;
+    lastXRef.current = touch.clientX - rect.left;
+    lastYRef.current = touch.clientY - rect.top;
+  };
+
+  const handleCanvasTouchMove = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    if (!isDrawingRef.current || e.touches.length !== 1) return;
+    const canvas = overlayCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const rect = canvas.getBoundingClientRect();
+    const touch = e.touches[0];
+
+    const currentX = touch.clientX - rect.left;
+    const currentY = touch.clientY - rect.top;
+
+    ctx.beginPath();
+    ctx.moveTo(lastXRef.current, lastYRef.current);
+    ctx.lineTo(currentX, currentY);
+    
+    if (isEraser) {
+      ctx.globalCompositeOperation = "destination-out";
+      ctx.lineWidth = brushSize * 4;
+    } else {
+      ctx.globalCompositeOperation = "source-over";
+      ctx.strokeStyle = brushColor;
+      ctx.lineWidth = brushSize;
+    }
+    
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.stroke();
+
+    lastXRef.current = currentX;
+    lastYRef.current = currentY;
+  };
+
+  const clearOverlayCanvas = () => {
+    const canvas = overlayCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    
+    setDrawUndoStack((prev) => [...prev, currentFile?.canvasPaths || ""]);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    setVFileSystem((prev) => {
+      const updated = cloneFileSystem(prev);
+      const file = findNodeRecursive(updated, currentFileId) as JournalFile;
+      if (file) {
+        file.canvasPaths = "";
+      }
+      syncWithServer(updated);
+      return updated;
+    });
+  };
+
+  // Media review helpers
+  const handleUpdateStarRating = (star: number) => {
+    if (!currentFileId) return;
+    setVFileSystem((prev) => {
+      const updated = cloneFileSystem(prev);
+      const file = findNodeRecursive(updated, currentFileId) as JournalFile;
+      if (file) {
+        file.starRating = star;
+      }
+      syncWithServer(updated);
+      return updated;
+    });
+  };
+
+  const handleUpdateOneLiner = (summary: string) => {
+    if (!currentFileId) return;
+    setVFileSystem((prev) => {
+      const updated = cloneFileSystem(prev);
+      const file = findNodeRecursive(updated, currentFileId) as JournalFile;
+      if (file) {
+        file.oneLiner = summary;
+      }
+      syncWithServer(updated);
+      return updated;
+    });
+  };
+
+  // Character alignment helpers
+  const handleAddCharacter = () => {
+    if (!currentFileId) return;
+    setVFileSystem((prev) => {
+      const updated = cloneFileSystem(prev);
+      const file = findNodeRecursive(updated, currentFileId) as JournalFile;
+      if (file) {
+        if (!file.characters) file.characters = [];
+        file.characters.push({
+          id: `char_${Date.now()}`,
+          name: "New Character",
+          role: "Ally / Protagonist",
+          desc: "Key role profile and alignment notes..."
+        });
+      }
+      syncWithServer(updated);
+      return updated;
+    });
+  };
+
+  const handleRemoveCharacter = (charId: string) => {
+    if (!currentFileId) return;
+    setVFileSystem((prev) => {
+      const updated = cloneFileSystem(prev);
+      const file = findNodeRecursive(updated, currentFileId) as JournalFile;
+      if (file) {
+        file.characters = (file.characters || []).filter((c) => c.id !== charId);
+      }
+      syncWithServer(updated);
+      return updated;
+    });
+  };
+
+  const handleUpdateCharacter = (charId: string, field: "name" | "role" | "desc", value: string) => {
+    if (!currentFileId) return;
+    setVFileSystem((prev) => {
+      const updated = cloneFileSystem(prev);
+      const file = findNodeRecursive(updated, currentFileId) as JournalFile;
+      if (file) {
+        file.characters = (file.characters || []).map((c) => {
+          if (c.id === charId) {
+            return { ...c, [field]: value };
+          }
+          return c;
+        });
+      }
+      syncWithServer(updated);
+      return updated;
+    });
+  };
+
+  const getRatingAuraClass = (stars?: number): string => {
+    if (!stars) return "";
+    switch (stars) {
+      case 5:
+        return "border-2 border-amber-400/80 shadow-[0_0_40px_rgba(251,191,36,0.3)] ring-2 ring-amber-400/20";
+      case 4:
+        return "border-2 border-fuchsia-500/70 shadow-[0_0_35px_rgba(217,70,239,0.25)] ring-2 ring-fuchsia-500/15";
+      case 3:
+        return "border-2 border-emerald-400/60 shadow-[0_0_30px_rgba(52,211,153,0.2)]";
+      case 2:
+        return "border-2 border-slate-400/40 shadow-[0_0_20px_rgba(148,163,184,0.1)]";
+      case 1:
+        return "border border-blue-400/30 shadow-[0_0_20px_rgba(96,165,250,0.08)]";
+      default:
+        return "";
     }
   };
 
@@ -209,7 +563,7 @@ export default function App() {
     const rawHTML = editor.innerHTML;
 
     setVFileSystem((prev) => {
-      const updated = [...prev];
+      const updated = cloneFileSystem(prev);
       const file = findNodeRecursive(updated, currentFileId) as JournalFile;
       if (file) {
         if (file.isLocked) {
@@ -222,8 +576,19 @@ export default function App() {
           file.content = rawHTML;
         }
         file.edited = new Date().toLocaleString();
+
+        // Dual-Save instant local cache for vanish-text prevention (Layer 1)
+        localStorage.setItem(`rehydrate_file_${file.id}`, rawHTML);
+        localStorage.setItem("comic_diary_fs_tree", JSON.stringify(updated));
+
+        // Debounced background sync (Layer 2)
+        if (saveDebounceRef.current) {
+          clearTimeout(saveDebounceRef.current);
+        }
+        saveDebounceRef.current = setTimeout(() => {
+          syncWithServer(updated);
+        }, 1000);
       }
-      syncWithServer(updated);
       return updated;
     });
   };
@@ -278,7 +643,7 @@ export default function App() {
     };
 
     setVFileSystem((prev) => {
-      const next = [...prev];
+      const next = cloneFileSystem(prev);
       if (parentId) {
         const parent = findNodeRecursive(next, parentId) as JournalFolder;
         if (parent) {
@@ -308,7 +673,7 @@ export default function App() {
     };
 
     setVFileSystem((prev) => {
-      const next = [...prev];
+      const next = cloneFileSystem(prev);
       const parent = findNodeRecursive(next, parentId) as JournalFolder;
       if (parent) {
         parent.children.push(newFile);
@@ -324,7 +689,7 @@ export default function App() {
   // Rename node
   const handleRenameNode = (id: string, name: string) => {
     setVFileSystem((prev) => {
-      const next = [...prev];
+      const next = cloneFileSystem(prev);
       const target = findNodeRecursive(next, id);
       if (target) {
         target.name = name;
@@ -336,9 +701,12 @@ export default function App() {
 
   // Delete node
   const handleDeleteNode = (id: string) => {
-    if (!confirm("Are you sure you want to delete this node permanent from ledger?")) return;
+    setDeletePendingId(id);
+  };
+
+  const executeDeleteNode = (id: string) => {
     setVFileSystem((prev) => {
-      const next = [...prev];
+      const next = cloneFileSystem(prev);
       removeNodeRecursive(next, id);
       if (currentFileId === id) {
         setCurrentFileId(null);
@@ -346,12 +714,13 @@ export default function App() {
       syncWithServer(next);
       return next;
     });
+    setDeletePendingId(null);
   };
 
   // Move node (Cut)
   const handleCutNode = (id: string) => {
     setVFileSystem((prev) => {
-      const next = [...prev];
+      const next = cloneFileSystem(prev);
       const cut = removeNodeRecursive(next, id);
       if (cut) {
         setClipboardNode(cut);
@@ -364,7 +733,7 @@ export default function App() {
   const handlePasteNode = (parentId: string) => {
     if (!clipboardNode) return;
     setVFileSystem((prev) => {
-      const next = [...prev];
+      const next = cloneFileSystem(prev);
       const parent = findNodeRecursive(next, parentId) as JournalFolder;
       if (parent && parent.children) {
         parent.children.push(clipboardNode);
@@ -378,7 +747,7 @@ export default function App() {
   // AES Password protection for folders
   const handleLockNode = (id: string, password?: string, type?: "folder" | "file") => {
     setVFileSystem((prev) => {
-      const next = [...prev];
+      const next = cloneFileSystem(prev);
       const target = findNodeRecursive(next, id);
       if (target) {
         target.isLocked = true;
@@ -398,7 +767,7 @@ export default function App() {
 
   const handleUnlockNode = (id: string, password?: string, type?: "folder" | "file") => {
     setVFileSystem((prev) => {
-      const next = [...prev];
+      const next = cloneFileSystem(prev);
       const target = findNodeRecursive(next, id);
       if (target) {
         if (type === "folder") {
@@ -442,7 +811,7 @@ export default function App() {
     };
 
     setVFileSystem((prev) => {
-      const next = [...prev];
+      const next = cloneFileSystem(prev);
       const file = findNodeRecursive(next, currentFileId) as JournalFile;
       if (file) {
         if (!file.stickers) file.stickers = [];
@@ -457,7 +826,7 @@ export default function App() {
   const handleMoveSticker = (stickerIndex: number, top: string, left: string) => {
     if (!currentFileId) return;
     setVFileSystem((prev) => {
-      const next = [...prev];
+      const next = cloneFileSystem(prev);
       const file = findNodeRecursive(next, currentFileId) as JournalFile;
       if (file && file.stickers) {
         file.stickers[stickerIndex].top = top;
@@ -471,7 +840,7 @@ export default function App() {
   const handleScaleSticker = (stickerIndex: number) => {
     if (!currentFileId) return;
     setVFileSystem((prev) => {
-      const next = [...prev];
+      const next = cloneFileSystem(prev);
       const file = findNodeRecursive(next, currentFileId) as JournalFile;
       if (file && file.stickers) {
         const currentScale = parseFloat(file.stickers[stickerIndex].transform.replace("scale(", "").replace(")", "")) || 1;
@@ -486,7 +855,7 @@ export default function App() {
   const handleDeleteSticker = (stickerIndex: number) => {
     if (!currentFileId) return;
     setVFileSystem((prev) => {
-      const next = [...prev];
+      const next = cloneFileSystem(prev);
       const file = findNodeRecursive(next, currentFileId) as JournalFile;
       if (file && file.stickers) {
         file.stickers.splice(stickerIndex, 1);
@@ -524,7 +893,7 @@ export default function App() {
     reader.onload = () => {
       if (currentFileId) {
         setVFileSystem((prev) => {
-          const next = [...prev];
+          const next = cloneFileSystem(prev);
           const target = findNodeRecursive(next, currentFileId) as JournalFile;
           if (target) {
             target.attached_image = reader.result as string;
@@ -540,7 +909,7 @@ export default function App() {
   const handleRemoveAttachment = () => {
     if (currentFileId) {
       setVFileSystem((prev) => {
-        const next = [...prev];
+        const next = cloneFileSystem(prev);
         const target = findNodeRecursive(next, currentFileId) as JournalFile;
         if (target) {
           delete target.attached_image;
@@ -589,7 +958,7 @@ export default function App() {
       const data = await response.json();
       if (data.image_data_url) {
         setVFileSystem((prev) => {
-          const next = [...prev];
+          const next = cloneFileSystem(prev);
           const target = findNodeRecursive(next, currentFileId) as JournalFile;
           if (target) {
             target.comic = data.image_data_url;
@@ -609,7 +978,7 @@ export default function App() {
   const handleUpdateMood = (mood: string) => {
     if (!currentFileId) return;
     setVFileSystem((prev) => {
-      const next = [...prev];
+      const next = cloneFileSystem(prev);
       const target = findNodeRecursive(next, currentFileId) as JournalFile;
       if (target) {
         target.mood = mood;
@@ -619,10 +988,54 @@ export default function App() {
     });
   };
 
+  // Update active file weather
+  const handleUpdateWeather = (weather: string) => {
+    if (!currentFileId) return;
+    setVFileSystem((prev) => {
+      const next = cloneFileSystem(prev);
+      const target = findNodeRecursive(next, currentFileId) as JournalFile;
+      if (target) {
+        target.weather = weather;
+      }
+      syncWithServer(next);
+      return next;
+    });
+  };
+
+  // Master passcode scanner for Search Bar Vault unsealing:
+  useEffect(() => {
+    if (!dashboardSearchQuery || dashboardSearchQuery.trim() === "") return;
+    
+    let unsealedAny = false;
+    const scanRecursively = (nodes: JournalNode[]) => {
+      nodes.forEach((n) => {
+        if (n.isLocked && n.password && n.password.trim() === dashboardSearchQuery.trim()) {
+          if (!unsealedVaultIds.includes(n.id)) {
+            setUnsealedVaultIds((prev) => [...prev, n.id]);
+            unsealedAny = true;
+          }
+        }
+        if (n.type === "folder" && (n as JournalFolder).children) {
+          scanRecursively((n as JournalFolder).children);
+        }
+      });
+    };
+
+    scanRecursively(vFileSystem);
+
+    if (unsealedAny) {
+      alert("🔓 SECURITY ACCESS GRANTED: Secret Passcode Match! The hidden Vault section has unsealed & revealed itself in the ledger filesystem.");
+    }
+  }, [dashboardSearchQuery, vFileSystem]);
+
   // Flat helper to extract list for search feeds
   const getAllFiles = (nodes: JournalNode[]): JournalFile[] => {
     let list: JournalFile[] = [];
     nodes.forEach((n) => {
+      // Hide locked items from standard lists unless unsealed
+      if (n.isLocked && !unsealedVaultIds.includes(n.id)) {
+        return;
+      }
       if (n.type === "file") list.push(n as JournalFile);
       else if (n.type === "folder" && (n as JournalFolder).children) {
         list = list.concat(getAllFiles((n as JournalFolder).children));
@@ -724,6 +1137,7 @@ export default function App() {
               collapsed={sidebarCollapsed}
               onToggleCollapsed={() => setSidebarCollapsed(!sidebarCollapsed)}
               username={username}
+              unsealedVaultIds={unsealedVaultIds}
             />
 
             {/* Main Application deck */}
@@ -738,7 +1152,7 @@ export default function App() {
                   : "bg-black/50 backdrop-blur-md border-pink-950/20 text-slate-100"
               }`}>
                 <div className="flex items-center gap-2">
-                  {(["dashboard", "editor", "comic-book", "insights", "communications"] as const).map((tab) => (
+                  {(["dashboard", "editor", "comic-book", "insights", "communications", "media-ledger"] as const).map((tab) => (
                     <button
                       key={tab}
                       onClick={() => setCurrentTab(tab)}
@@ -752,7 +1166,7 @@ export default function App() {
                             }`
                       }`}
                     >
-                      {tab === "comic-book" ? "Comic compiler" : tab === "communications" ? "Messenger 💬" : tab}
+                      {tab === "comic-book" ? "Comic compiler" : tab === "communications" ? "Messenger 💬" : tab === "media-ledger" ? "Movies & Books 📚" : tab}
                     </button>
                   ))}
                 </div>
@@ -880,17 +1294,55 @@ export default function App() {
                             {Array.from({ length: 30 }).map((_, i) => {
                               const day = i + 1;
                               const isToday = day === 24;
+                              
+                              // Find files for this day
+                              const dayFile = (() => {
+                                const allFiles: JournalFile[] = [];
+                                const traverse = (nodes: JournalNode[]) => {
+                                  for (const node of nodes) {
+                                    if (node.type === "file") {
+                                      allFiles.push(node);
+                                    } else if (node.type === "folder" && node.children) {
+                                      traverse(node.children);
+                                    }
+                                  }
+                                };
+                                traverse(vFileSystem);
+                                for (const file of allFiles) {
+                                  if (!file.created) continue;
+                                  try {
+                                    const d = new Date(file.created);
+                                    if (d.getDate() === day && d.getMonth() === 5) { // Month index 5 is June
+                                      return file;
+                                    }
+                                  } catch (e) {}
+                                }
+                                return null;
+                              })();
+
                               return (
-                                <span
+                                <button
                                   key={i}
-                                  className={`py-1.5 rounded-md ${
+                                  onClick={() => {
+                                    if (dayFile) {
+                                      setCurrentFileId(dayFile.id);
+                                      setCurrentTab("editor");
+                                    }
+                                  }}
+                                  className={`py-1 rounded-md flex flex-col items-center justify-center min-h-[44px] transition-all relative cursor-pointer ${
                                     isToday 
                                       ? "bg-pink-500 text-white font-bold shadow-md shadow-pink-500/30" 
-                                      : `hover:bg-pink-500/10 transition-colors ${isLight ? "text-stone-600 hover:text-pink-600" : "text-slate-400"}`
+                                      : dayFile 
+                                        ? "bg-pink-500/10 hover:bg-pink-500/20 border border-pink-500/30 font-bold" 
+                                        : `hover:bg-pink-500/10 ${isLight ? "text-stone-600 hover:text-pink-600" : "text-slate-400"}`
                                   }`}
+                                  title={dayFile ? `Entry: ${dayFile.name} (Mood: ${dayFile.mood})` : undefined}
                                 >
-                                  {day}
-                                </span>
+                                  <span className="text-[10px] leading-none">{day}</span>
+                                  {dayFile && (
+                                    <span className="text-xs mt-1">{dayFile.mood || "😊"}</span>
+                                  )}
+                                </button>
                               );
                             })}
                           </div>
@@ -914,157 +1366,401 @@ export default function App() {
                     />
 
                     {/* Paper Stage workspace background */}
-                    <div className={`flex-1 overflow-y-auto p-8 flex justify-center items-start ${wallpaperThemes[personalization.outerWallpaper] || "bg-[#0b0d0e]"} transition-all duration-300`}>
+                    <div className={`flex-1 overflow-y-auto p-8 flex flex-col xl:flex-row items-center xl:items-start justify-center gap-8 ${wallpaperThemes[personalization.outerWallpaper] || "bg-[#0b0d0e]"} transition-all duration-300`}>
                       {currentFile ? (
-                        <div
-                          id="journalPadSheet"
-                          style={{
-                            padding: personalization.margins,
-                            lineHeight: personalization.lineSpacing,
-                            fontFamily: personalization.typography,
-                          }}
-                          className={`w-full max-w-3xl min-h-[800px] relative transition-all duration-300 ${padPrintStyles[personalization.padStyle] || "bg-white text-zinc-900"} rounded-lg`}
-                        >
-                          {/* Stickers layout floating */}
-                          {(currentFile.stickers || []).map((stk, idx) => (
-                            <div
-                              key={idx}
-                              style={{ top: stk.top, left: stk.left, transform: stk.transform }}
-                              className="absolute cursor-move user-select-none group/stk z-50 p-1"
-                              onMouseDown={(e) => {
-                                const rect = e.currentTarget.getBoundingClientRect();
-                                const startX = e.clientX;
-                                const startY = e.clientY;
-                                const startLeft = parseInt(stk.left) || 0;
-                                const startTop = parseInt(stk.top) || 0;
+                        <>
+                          <div className="flex flex-col gap-4 w-full max-w-3xl shrink-0">
+                            
+                            {/* Sketch overlay active toolkit */}
+                            {isDrawingModeActive && (
+                              <div className="p-2 bg-zinc-900/95 border border-zinc-800 rounded-lg flex flex-wrap items-center justify-between gap-2 text-xs font-mono w-full z-40 relative shadow-xl">
+                                <div className="flex items-center gap-3 flex-wrap">
+                                  <span className="text-[10px] uppercase font-bold text-pink-500 flex items-center gap-1">
+                                    <Paintbrush className="w-3.5 h-3.5 animate-pulse" /> Drawing Layer Active
+                                  </span>
+                                  
+                                  {/* Color buttons */}
+                                  <div className="flex items-center gap-1">
+                                    {["#ec4899", "#f59e0b", "#10b981", "#3b82f6", "#ef4444", "#ffffff", "#000000"].map((color) => (
+                                      <button
+                                        key={color}
+                                        onClick={() => {
+                                          setBrushColor(color);
+                                          setIsEraser(false);
+                                        }}
+                                        style={{ backgroundColor: color }}
+                                        className={`w-4 h-4 rounded-full border ${brushColor === color && !isEraser ? "ring-2 ring-pink-500 scale-110" : "border-zinc-700"} cursor-pointer shrink-0`}
+                                        title={color}
+                                      />
+                                    ))}
+                                  </div>
 
-                                const moveHandler = (ev: MouseEvent) => {
-                                  const dx = ev.clientX - startX;
-                                  const dy = ev.clientY - startY;
-                                  handleMoveSticker(idx, `${startTop + dy}px`, `${startLeft + dx}px`);
-                                };
+                                  {/* Size range slider */}
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="text-[9px] opacity-60">Brush:</span>
+                                    <input
+                                      type="range"
+                                      min="1"
+                                      max="15"
+                                      value={brushSize}
+                                      onChange={(e) => setBrushSize(parseInt(e.target.value))}
+                                      className="w-16 accent-pink-500 h-1 rounded bg-zinc-800"
+                                    />
+                                    <span className="text-[9px]">{brushSize}px</span>
+                                  </div>
+                                </div>
 
-                                const upHandler = () => {
-                                  document.removeEventListener("mousemove", moveHandler);
-                                  document.removeEventListener("mouseup", upHandler);
-                                };
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    onClick={() => setIsEraser(!isEraser)}
+                                    className={`px-2.5 py-1 rounded border text-[10px] font-semibold transition-all shrink-0 cursor-pointer ${
+                                      isEraser 
+                                        ? "bg-pink-500/20 border-pink-500 text-pink-500 font-bold" 
+                                        : "border-zinc-800 hover:bg-zinc-800 text-zinc-400"
+                                    }`}
+                                  >
+                                    🧹 Eraser
+                                  </button>
+                                  
+                                  <button
+                                    onClick={handleDrawUndo}
+                                    className="p-1 rounded bg-zinc-800 hover:bg-zinc-700 text-slate-300 cursor-pointer"
+                                    title="Undo Drawing"
+                                  >
+                                    <Undo className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={handleDrawRedo}
+                                    className="p-1 rounded bg-zinc-800 hover:bg-zinc-700 text-slate-300 cursor-pointer"
+                                    title="Redo Drawing"
+                                  >
+                                    <Redo className="w-3.5 h-3.5" />
+                                  </button>
 
-                                document.addEventListener("mousemove", moveHandler);
-                                document.addEventListener("mouseup", upHandler);
-                              }}
-                              onDoubleClick={() => handleScaleSticker(idx)}
-                            >
-                              <span className="text-4xl select-none leading-none block">{stk.char}</span>
-                              <button
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleDeleteSticker(idx);
-                                }}
-                                className="absolute -top-1 -right-1 bg-red-500 hover:bg-red-600 text-white rounded-full w-4.5 h-4.5 text-[10px] font-bold flex items-center justify-center opacity-0 group-hover/stk:opacity-100 transition-opacity shrink-0"
-                              >
-                                ×
-                              </button>
-                            </div>
-                          ))}
-
-                          {/* Info Header bar */}
-                          <div className="flex items-center justify-between text-xs opacity-60 font-mono mb-4 pb-2 border-b border-zinc-900/10" contentEditable={false}>
-                            <span>Created: {currentFile.created}</span>
-                            <div className="flex items-center gap-2">
-                              <span>Mood selector:</span>
-                              <select
-                                value={currentFile.mood || "😊"}
-                                onChange={(e) => handleUpdateMood(e.target.value)}
-                                className="bg-transparent border border-zinc-900/10 rounded px-1"
-                              >
-                                <option value="😊">Joy 😊</option>
-                                <option value="💻">Code 💻</option>
-                                <option value="🌌">Zen 🌌</option>
-                                <option value="⚡">Chaos ⚡</option>
-                              </select>
-                            </div>
-                          </div>
-
-                          <h2 className="font-display font-bold text-2xl tracking-tight mb-6 pb-2 border-b border-zinc-900/5">
-                            {currentFile.isLocked ? `🔒 [Locked Block] ${currentFile.name}` : currentFile.name}
-                          </h2>
-
-                          {/* Reference Attachment upload bar */}
-                          {currentFile.attached_image && (
-                            <div className="mb-6 p-3 rounded-lg border border-dashed border-zinc-900/20 bg-zinc-900/5 text-center relative" contentEditable={false}>
-                              <p className="text-[10px] font-mono opacity-60 mb-2">Attached Doodle Base Layer / Photo</p>
-                              <img src={currentFile.attached_image} alt="Ref snapshot" className="max-h-56 mx-auto rounded-lg" />
-                              <button
-                                onClick={handleRemoveAttachment}
-                                className="absolute top-2 right-2 px-2.5 py-1 bg-red-500 hover:bg-red-600 text-white rounded-lg text-[10px] font-semibold transition-colors shrink-0"
-                              >
-                                Remove
-                              </button>
-                            </div>
-                          )}
-
-                          <div className="flex items-center gap-3 mb-6" contentEditable={false}>
-                            <button
-                              onClick={() => setShowWhiteboard(true)}
-                              className="px-3.5 py-1.5 bg-zinc-900 text-white border border-zinc-800 rounded-lg text-xs font-semibold hover:bg-zinc-800 flex items-center gap-1.5 transition-colors shrink-0 cursor-pointer"
-                            >
-                              <ImagePlus className="w-3.5 h-3.5" /> Sketchpad Whiteboard
-                            </button>
-                            <label className="px-3.5 py-1.5 bg-zinc-900 text-white border border-zinc-800 rounded-lg text-xs font-semibold hover:bg-zinc-800 flex items-center gap-1.5 transition-colors shrink-0 cursor-pointer">
-                              <ImageIcon className="w-3.5 h-3.5" /> Reference Snapshot
-                              <input type="file" accept="image/*" onChange={handleImageAttachment} className="hidden" />
-                            </label>
-                          </div>
-
-                          {/* Main Editable content area */}
-                          <div
-                            ref={editorRef}
-                            id="editorEngine"
-                            contentEditable={!isMarkdownMode}
-                            onInput={handleEditorInput}
-                            style={{ minHeight: "450px" }}
-                            className="outline-none text-base leading-relaxed whitespace-pre-wrap word-break"
-                          />
-
-                          <hr className="my-10 border-t border-dashed border-zinc-900/10" contentEditable={false} />
-
-                          {/* Pipeline illustrations generator block */}
-                          <div className="space-y-4" contentEditable={false}>
-                            <div className="flex items-center justify-between">
-                              <div>
-                                <h4 className="font-display font-bold text-sm text-inherit">Daily Graphic Novel Illustrator</h4>
-                                <p className="text-[10px] opacity-60 font-mono">AI pipeline translates decrypted text logs into 2D comic panels</p>
-                              </div>
-                              <button
-                                onClick={triggerAICohesiveComic}
-                                disabled={generatingComic}
-                                className="px-4 py-2 bg-orange-500 hover:bg-orange-600 disabled:bg-zinc-800 disabled:text-slate-500 text-black font-semibold text-xs rounded-xl flex items-center gap-2 cursor-pointer"
-                              >
-                                {generatingComic ? (
-                                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                                ) : (
-                                  <Sparkles className="w-3.5 h-3.5" />
-                                )}
-                                Generate Illustration Frame
-                              </button>
-                            </div>
-
-                            {currentFile.comic && (
-                              <div className="relative rounded-xl overflow-hidden border-4 border-black bg-white p-4 shadow-xl shadow-black/10 text-center">
-                                <h5 className="text-black font-display font-bold text-xs pb-2 border-b border-zinc-100">PANEL OUTLINE</h5>
-                                <img src={currentFile.comic} alt="Generated Panel" className="max-h-96 mx-auto rounded-lg object-contain" />
-                                <a
-                                  href={currentFile.comic}
-                                  download={`Comic_Panel_${currentFile.name.replace(/\s+/g, "_")}.png`}
-                                  className="absolute bottom-4 right-4 p-2 rounded-full bg-black hover:bg-black/90 text-orange-400 hover:text-orange-300 shadow-lg border border-zinc-800"
-                                >
-                                  <ImageIcon className="w-4 h-4" />
-                                </a>
+                                  <button
+                                    onClick={clearOverlayCanvas}
+                                    className="px-2 py-1 bg-red-500/15 hover:bg-red-500/25 text-red-400 border border-red-500/20 rounded text-[10px] font-semibold shrink-0 cursor-pointer"
+                                  >
+                                    Clear Layer
+                                  </button>
+                                </div>
                               </div>
                             )}
+
+                            <div
+                              id="journalPadSheet"
+                              style={{
+                                padding: personalization.margins,
+                                lineHeight: personalization.lineSpacing,
+                                fontFamily: personalization.typography,
+                                background: personalization.padStyle === "transparent-glass" 
+                                  ? `rgba(24, 24, 27, ${(personalization.glassOpacity !== undefined ? personalization.glassOpacity : 40) / 100})` 
+                                  : undefined,
+                                backdropFilter: personalization.padStyle === "transparent-glass" 
+                                  ? "blur(12px)" 
+                                  : undefined,
+                                color: personalization.padStyle === "transparent-glass" 
+                                  ? "#f4f4f5" 
+                                  : undefined,
+                              }}
+                              className={`w-full min-h-[800px] relative transition-all duration-300 ${personalization.padStyle === "transparent-glass" ? "border border-zinc-700/30 shadow-2xl" : (padPrintStyles[personalization.padStyle] || "bg-white text-zinc-900")} rounded-lg ${getRatingAuraClass(currentFile.starRating)}`}
+                            >
+                              {/* OVERLAY DRAWING CANVAS */}
+                              <canvas
+                                ref={overlayCanvasRef}
+                                className="absolute top-0 left-0 w-full h-full rounded-lg z-25"
+                                style={{
+                                  pointerEvents: isDrawingModeActive ? "auto" : "none",
+                                }}
+                                onMouseDown={handleCanvasMouseDown}
+                                onMouseMove={handleCanvasMouseMove}
+                                onMouseUp={handleCanvasMouseUp}
+                                onMouseLeave={handleCanvasMouseUp}
+                                onTouchStart={handleCanvasTouchStart}
+                                onTouchMove={handleCanvasTouchMove}
+                                onTouchEnd={handleCanvasMouseUp}
+                              />
+
+                              {/* Stickers layout floating */}
+                              {(currentFile.stickers || []).map((stk, idx) => (
+                                <div
+                                  key={idx}
+                                  style={{ top: stk.top, left: stk.left, transform: stk.transform }}
+                                  className="absolute cursor-move user-select-none group/stk z-50 p-1"
+                                  onMouseDown={(e) => {
+                                    const rect = e.currentTarget.getBoundingClientRect();
+                                    const startX = e.clientX;
+                                    const startY = e.clientY;
+                                    const startLeft = parseInt(stk.left) || 0;
+                                    const startTop = parseInt(stk.top) || 0;
+
+                                    const moveHandler = (ev: MouseEvent) => {
+                                      const dx = ev.clientX - startX;
+                                      const dy = ev.clientY - startY;
+                                      handleMoveSticker(idx, `${startTop + dy}px`, `${startLeft + dx}px`);
+                                    };
+
+                                    const upHandler = () => {
+                                      document.removeEventListener("mousemove", moveHandler);
+                                      document.removeEventListener("mouseup", upHandler);
+                                    };
+
+                                    document.addEventListener("mousemove", moveHandler);
+                                    document.addEventListener("mouseup", upHandler);
+                                  }}
+                                  onDoubleClick={() => handleScaleSticker(idx)}
+                                >
+                                  <span className="text-4xl select-none leading-none block">{stk.char}</span>
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDeleteSticker(idx);
+                                    }}
+                                    className="absolute -top-1 -right-1 bg-red-500 hover:bg-red-600 text-white rounded-full w-4.5 h-4.5 text-[10px] font-bold flex items-center justify-center opacity-0 group-hover/stk:opacity-100 transition-opacity shrink-0"
+                                  >
+                                    ×
+                                  </button>
+                                </div>
+                              ))}
+
+                              {/* Info Header bar */}
+                              <div className="flex flex-wrap items-center justify-between gap-4 text-xs opacity-60 font-mono mb-4 pb-2 border-b border-zinc-900/10" contentEditable={false}>
+                                <span>Created: {currentFile.created}</span>
+                                <div className="flex items-center gap-4">
+                                  <div className="flex items-center gap-1">
+                                    <span>Mood:</span>
+                                    <select
+                                      value={currentFile.mood || "😊"}
+                                      onChange={(e) => handleUpdateMood(e.target.value)}
+                                      className="bg-transparent border border-zinc-900/10 rounded px-1 text-inherit cursor-pointer"
+                                    >
+                                      <option value="😊">Joy 😊</option>
+                                      <option value="💻">Code 💻</option>
+                                      <option value="🌌">Zen 🌌</option>
+                                      <option value="⚡">Chaos ⚡</option>
+                                      <option value="😭">Sad 😭</option>
+                                      <option value="🤯">Mindblown 🤯</option>
+                                      <option value="😡">Angry 😡</option>
+                                      <option value="😴">Tired 😴</option>
+                                      <option value="🥳">Excited 🥳</option>
+                                      <option value="🤔">Thinking 🤔</option>
+                                      <option value="🥰">Loved 🥰</option>
+                                      <option value="🤢">Sick 🤢</option>
+                                    </select>
+                                  </div>
+                                  <div className="flex items-center gap-1">
+                                    <span>Weather:</span>
+                                    <select
+                                      value={currentFile.weather || "Sunny ☀️"}
+                                      onChange={(e) => handleUpdateWeather(e.target.value)}
+                                      className="bg-transparent border border-zinc-900/10 rounded px-1 text-inherit cursor-pointer"
+                                    >
+                                      <option value="Sunny ☀️">Sunny ☀️</option>
+                                      <option value="Rainy 🌧️">Rainy 🌧️</option>
+                                      <option value="Windy 🍃">Windy 🍃</option>
+                                      <option value="Cloudy ☁️">Cloudy ☁️</option>
+                                      <option value="Snowy ❄️">Snowy ❄️</option>
+                                      <option value="Stormy ⛈️">Stormy ⛈️</option>
+                                    </select>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <h2 className="font-display font-bold text-2xl tracking-tight mb-6 pb-2 border-b border-zinc-900/5">
+                                {currentFile.isLocked ? `🔒 [Locked Block] ${currentFile.name}` : currentFile.name}
+                              </h2>
+
+                              {/* Reference Attachment upload bar */}
+                              {currentFile.attached_image && (
+                                <div className="mb-6 p-3 rounded-lg border border-dashed border-zinc-900/20 bg-zinc-900/5 text-center relative" contentEditable={false}>
+                                  <p className="text-[10px] font-mono opacity-60 mb-2">Attached Doodle Base Layer / Photo</p>
+                                  <img src={currentFile.attached_image} alt="Ref snapshot" className="max-h-56 mx-auto rounded-lg" />
+                                  <button
+                                    onClick={handleRemoveAttachment}
+                                    className="absolute top-2 right-2 px-2.5 py-1 bg-red-500 hover:bg-red-600 text-white rounded-lg text-[10px] font-semibold transition-colors shrink-0"
+                                  >
+                                    Remove
+                                  </button>
+                                </div>
+                              )}
+
+                              <div className="flex items-center gap-3 mb-6 flex-wrap" contentEditable={false}>
+                                <button
+                                  onClick={() => setShowWhiteboard(true)}
+                                  className="px-3.5 py-1.5 bg-zinc-900 text-white border border-zinc-800 rounded-lg text-xs font-semibold hover:bg-zinc-800 flex items-center gap-1.5 transition-colors shrink-0 cursor-pointer font-sans"
+                                >
+                                  <ImagePlus className="w-3.5 h-3.5" /> Sketchpad Whiteboard
+                                </button>
+                                
+                                <button
+                                  onClick={() => setIsDrawingModeActive(!isDrawingModeActive)}
+                                  className={`px-3.5 py-1.5 border rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors shrink-0 cursor-pointer font-sans ${
+                                    isDrawingModeActive 
+                                      ? "bg-pink-500 border-pink-500 text-white shadow-lg shadow-pink-500/25 font-bold" 
+                                      : "bg-zinc-900 border-zinc-800 text-white hover:bg-zinc-800"
+                                  }`}
+                                >
+                                  <Paintbrush className="w-3.5 h-3.5" /> 
+                                  {isDrawingModeActive ? "Canvas Drawing Active" : "Sketch Overlay"}
+                                </button>
+
+                                <label className="px-3.5 py-1.5 bg-zinc-900 text-white border border-zinc-800 rounded-lg text-xs font-semibold hover:bg-zinc-800 flex items-center gap-1.5 transition-colors shrink-0 cursor-pointer font-sans">
+                                  <ImageIcon className="w-3.5 h-3.5" /> Reference Snapshot
+                                  <input type="file" accept="image/*" onChange={handleImageAttachment} className="hidden" />
+                                </label>
+                              </div>
+
+                              {/* Main Editable content area */}
+                              <div
+                                ref={editorRef}
+                                id="editorEngine"
+                                contentEditable={!isMarkdownMode}
+                                onInput={handleEditorInput}
+                                style={{ minHeight: "450px" }}
+                                className="outline-none text-base leading-relaxed whitespace-pre-wrap word-break"
+                              />
+
+                              <hr className="my-10 border-t border-dashed border-zinc-900/10" contentEditable={false} />
+
+                              {/* Pipeline illustrations generator block */}
+                              <div className="space-y-4" contentEditable={false}>
+                                <div className="flex items-center justify-between">
+                                  <div>
+                                    <h4 className="font-display font-bold text-sm text-inherit">Daily Graphic Novel Illustrator</h4>
+                                    <p className="text-[10px] opacity-60 font-mono">AI pipeline translates decrypted text logs into 2D comic panels</p>
+                                  </div>
+                                  <button
+                                    onClick={triggerAICohesiveComic}
+                                    disabled={generatingComic}
+                                    className="px-4 py-2 bg-orange-500 hover:bg-orange-600 disabled:bg-zinc-800 disabled:text-slate-500 text-black font-semibold text-xs rounded-xl flex items-center gap-2 cursor-pointer font-sans"
+                                  >
+                                    {generatingComic ? (
+                                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                    ) : (
+                                      <Sparkles className="w-3.5 h-3.5" />
+                                    )}
+                                    Generate Illustration Frame
+                                  </button>
+                                </div>
+
+                                {currentFile.comic && (
+                                  <div className="relative rounded-xl overflow-hidden border-4 border-black bg-white p-4 shadow-xl shadow-black/10 text-center">
+                                    <h5 className="text-black font-display font-bold text-xs pb-2 border-b border-zinc-100">PANEL OUTLINE</h5>
+                                    <img src={currentFile.comic} alt="Generated Panel" className="max-h-96 mx-auto rounded-lg object-contain" />
+                                    <a
+                                      href={currentFile.comic}
+                                      download={`Comic_Panel_${currentFile.name.replace(/\s+/g, "_")}.png`}
+                                      className="absolute bottom-4 right-4 p-2 rounded-full bg-black hover:bg-black/90 text-orange-400 hover:text-orange-300 shadow-lg border border-zinc-800"
+                                    >
+                                      <ImageIcon className="w-4 h-4" />
+                                    </a>
+                                  </div>
+                                )}
+                              </div>
+
+                            </div>
+
                           </div>
 
-                        </div>
+                          {/* SIDEBAR COMPANION: Media Review Rating + Character Alignment mapping */}
+                          <div className="w-full xl:w-80 shrink-0 space-y-6 z-30" contentEditable={false}>
+                            {/* Star rating & summary card */}
+                            <div className="p-5 rounded-2xl border border-zinc-800/80 bg-zinc-900/40 backdrop-blur-md space-y-4 shadow-xl">
+                              <div className="flex items-center justify-between">
+                                <span className="text-[10px] font-bold font-mono text-zinc-400 tracking-wider">MEDIA LOG SCORE</span>
+                                <div className="flex items-center gap-1 bg-zinc-950/60 py-1 px-2.5 rounded-lg border border-zinc-800/50">
+                                  {[1, 2, 3, 4, 5].map((star) => (
+                                    <button
+                                      key={star}
+                                      onClick={() => handleUpdateStarRating(star)}
+                                      className="text-sm transition-transform hover:scale-125 cursor-pointer"
+                                      title={`Assign ${star} stars`}
+                                    >
+                                      {star <= (currentFile.starRating || 0) ? "⭐" : "☆"}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+
+                              {/* One Liner Summary */}
+                              <div className="space-y-1.5">
+                                <label className="text-[9px] font-mono font-bold text-zinc-500 uppercase tracking-widest">
+                                  One-Liner Review Highlights
+                                </label>
+                                <input
+                                  type="text"
+                                  value={currentFile.oneLiner || ""}
+                                  placeholder="E.g. A masterpiece of space gothic horror!"
+                                  onChange={(e) => handleUpdateOneLiner(e.target.value)}
+                                  className="w-full rounded-xl bg-zinc-950/60 border border-zinc-800 text-xs py-2 px-3 outline-none text-slate-200 focus:border-pink-500/50 focus:ring-1 focus:ring-pink-500/25 transition-all"
+                                />
+                              </div>
+                            </div>
+
+                            {/* Character alignments mapper */}
+                            <div className="p-5 rounded-2xl border border-zinc-800/80 bg-zinc-900/40 backdrop-blur-md space-y-4 shadow-xl">
+                              <div className="flex items-center justify-between pb-2 border-b border-zinc-800/60">
+                                <span className="text-xs font-bold font-mono text-zinc-400 flex items-center gap-1.5 tracking-wider font-sans">
+                                  <Users className="w-4 h-4 text-pink-500" /> UNIVERSE CHARACTERS
+                                </span>
+                                <button
+                                  onClick={handleAddCharacter}
+                                  className="px-2.5 py-1 bg-pink-500 hover:bg-pink-600 text-white rounded-lg text-[9px] font-bold tracking-wider cursor-pointer shrink-0 transition-colors font-sans"
+                                >
+                                  + ADD
+                                </button>
+                              </div>
+
+                              <div className="space-y-4 max-h-[480px] overflow-y-auto pr-1 scrollbar-thin">
+                                {(currentFile.characters || []).length === 0 ? (
+                                  <div className="text-center py-6">
+                                    <p className="text-[11px] font-mono text-zinc-500">No alignments mapped.</p>
+                                    <p className="text-[10px] font-mono text-zinc-600 mt-1">Add infinite profile slots to map your novel characters!</p>
+                                  </div>
+                                ) : (
+                                  (currentFile.characters || []).map((char) => (
+                                    <div key={char.id} className="p-3.5 rounded-xl bg-zinc-950/50 border border-zinc-800/70 relative space-y-2 group/char">
+                                      <button
+                                        onClick={() => handleRemoveCharacter(char.id)}
+                                        className="absolute top-2.5 right-2.5 text-zinc-500 hover:text-red-400 text-xs shrink-0 cursor-pointer transition-colors"
+                                        title="Remove character profile"
+                                      >
+                                        ×
+                                      </button>
+                                      <div>
+                                        <input
+                                          type="text"
+                                          value={char.name}
+                                          placeholder="Character Name"
+                                          onChange={(e) => handleUpdateCharacter(char.id, "name", e.target.value)}
+                                          className="w-10/12 bg-transparent border-b border-zinc-800/50 focus:border-pink-500/50 text-xs py-0.5 outline-none font-bold text-slate-200 transition-colors font-sans"
+                                        />
+                                      </div>
+                                      <div>
+                                        <input
+                                          type="text"
+                                          value={char.role}
+                                          placeholder="Role / Alliance / Status"
+                                          onChange={(e) => handleUpdateCharacter(char.id, "role", e.target.value)}
+                                          className="w-full bg-transparent border-b border-zinc-800/50 focus:border-pink-500/50 text-[10px] py-0.5 outline-none font-mono text-pink-400 transition-colors"
+                                        />
+                                      </div>
+                                      <div>
+                                        <textarea
+                                          value={char.desc}
+                                          placeholder="Aesthetic notes, alignments, relationship vectors..."
+                                          onChange={(e) => handleUpdateCharacter(char.id, "desc", e.target.value)}
+                                          rows={2}
+                                          className="w-full bg-zinc-950/80 rounded-lg border border-zinc-800/40 focus:border-pink-500/50 text-[10px] p-2 outline-none text-zinc-400 resize-none font-sans transition-all"
+                                        />
+                                      </div>
+                                    </div>
+                                  ))
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </>
                       ) : (
                         <div className="flex-1 flex flex-col items-center justify-center p-12 text-center text-slate-500 space-y-4">
                           <BookOpen className="w-16 h-16 text-zinc-800 glow-active" />
@@ -1100,6 +1796,14 @@ export default function App() {
                   />
                 )}
 
+                {/* 6. MEDIA LEDGER (MOVIES & BOOKS) */}
+                {currentTab === "media-ledger" && (
+                  <MediaLedger
+                    personalization={personalization}
+                    vFileSystem={vFileSystem}
+                  />
+                )}
+
               </div>
 
             </div>
@@ -1111,7 +1815,7 @@ export default function App() {
                 onSaveDoodle={(base64) => {
                   if (currentFileId) {
                     setVFileSystem((prev) => {
-                      const next = [...prev];
+                      const next = cloneFileSystem(prev);
                       const target = findNodeRecursive(next, currentFileId) as JournalFile;
                       if (target) {
                         target.attached_image = base64;
@@ -1124,6 +1828,40 @@ export default function App() {
                 onClose={() => setShowWhiteboard(false)}
               />
             )}
+
+            {deletePendingId && (() => {
+              const deleteTargetNode = findNodeRecursive(vFileSystem, deletePendingId);
+              return (
+                <div className="fixed inset-0 bg-black/85 flex items-center justify-center p-4 z-[9999]" contentEditable={false}>
+                  <div className="bg-zinc-950 border border-zinc-800 rounded-2xl p-6 max-w-sm w-full space-y-4 shadow-2xl">
+                    <h3 className="text-lg font-display font-bold text-white flex items-center gap-2">
+                      ⚠️ Permanent Deletion
+                    </h3>
+                    <p className="text-xs text-slate-400 font-sans leading-relaxed">
+                      Are you sure you want to delete <span className="text-pink-400 font-semibold">"{deleteTargetNode?.name || "this item"}"</span>? This action is permanent and cannot be undone.
+                    </p>
+                    <div className="flex items-center justify-end gap-3 pt-2">
+                      <button
+                        onClick={() => setDeletePendingId(null)}
+                        className="px-4 py-2 bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 text-slate-300 rounded-xl text-xs font-semibold cursor-pointer transition-colors"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={() => {
+                          if (deletePendingId) {
+                            executeDeleteNode(deletePendingId);
+                          }
+                        }}
+                        className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded-xl text-xs font-semibold cursor-pointer transition-colors"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
 
           </div>
         )}

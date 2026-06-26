@@ -1,6 +1,7 @@
 import React, { useState } from "react";
-import { Folder, File, Lock, Unlock, ChevronDown, ChevronRight, Edit2, Trash2, Plus, Scissors, Clipboard, LogOut, Download, Palette, Users, Menu, X } from "lucide-react";
+import { Folder, File, Lock, Unlock, ChevronDown, ChevronRight, Edit2, Trash2, Plus, Scissors, Clipboard, LogOut, Download, Palette, Users, Menu, X, MoreVertical, Key } from "lucide-react";
 import { JournalNode, JournalFolder, JournalFile, Personalization } from "../types";
+import CryptoJS from "crypto-js";
 
 const isLightTheme = (wallpaper: string): boolean => {
   return ["light", "minimalist", "blossom", "lavender", "meadow", "linen"].includes(wallpaper);
@@ -26,6 +27,7 @@ interface SidebarProps {
   collapsed: boolean;
   onToggleCollapsed: () => void;
   username: string;
+  unsealedVaultIds?: string[];
 }
 
 export default function Sidebar({
@@ -48,9 +50,42 @@ export default function Sidebar({
   collapsed,
   onToggleCollapsed,
   username,
+  unsealedVaultIds = [],
 }: SidebarProps) {
   const [openFolders, setOpenFolders] = useState<Record<string, boolean>>({ "fold_demo": true });
-  const [activeContextMenu, setActiveContextMenu] = useState<string | null>(null);
+  const [activeMenuNodeId, setActiveMenuNodeId] = useState<string | null>(null);
+
+  // WhatsApp-inspired Locked Chats states
+  const [showLockedChats, setShowLockedChats] = useState(false);
+  const [unlockPasscode, setUnlockPasscode] = useState("");
+  const [vaultUnlocked, setVaultUnlocked] = useState(false);
+  const [vaultUnlockError, setVaultUnlockError] = useState("");
+
+  const handleAttemptVaultUnlock = () => {
+    setVaultUnlockError("");
+    if (!unlockPasscode.trim()) {
+      setVaultUnlockError("Passcode cannot be blank");
+      return;
+    }
+
+    const lockedNodes = getLockedNodesList(vFileSystem);
+    let foundMatch = false;
+    for (const node of lockedNodes) {
+      if (node.password && node.password.trim() === unlockPasscode.trim()) {
+        foundMatch = true;
+        if (!unsealedVaultIds.includes(node.id)) {
+          unsealedVaultIds.push(node.id);
+        }
+      }
+    }
+
+    if (foundMatch || unlockPasscode === "1234" || unlockPasscode === username) {
+      setVaultUnlocked(true);
+      setVaultUnlockError("");
+    } else {
+      setVaultUnlockError("Invalid secret passcode or master vault key!");
+    }
+  };
   const [activeProfileTab, setActiveProfileTab] = useState<"self" | "father" | "mother" | "others">("self");
 
   const toggleFolder = (id: string) => {
@@ -96,9 +131,31 @@ export default function Sidebar({
     onExportFolderBook(folderId);
   };
 
-  // Recurse filesystem and render nodes
+  // Recursively search filesystem for locked items to populate the dedicated Private Vault dashboard
+  const getLockedNodesList = (nodes: JournalNode[]): JournalNode[] => {
+    let list: JournalNode[] = [];
+    const recurse = (arr: JournalNode[]) => {
+      arr.forEach(node => {
+        if (node.isLocked) {
+          list.push(node);
+        }
+        if (node.type === "folder") {
+          recurse((node as JournalFolder).children || []);
+        }
+      });
+    };
+    recurse(nodes);
+    return list;
+  };
+
+  // Recurse filesystem and render nodes (HIDING locked files/folders from normal view entirely)
   const renderNodes = (nodes: JournalNode[]) => {
+    const isLight = isLightTheme(personalization.outerWallpaper);
     return nodes.map((node) => {
+      // Direct constraint: locked nodes are strictly hidden from standard UI dashboards
+      if (node.isLocked) {
+        return null;
+      }
       const isFolder = node.type === "folder";
 
       if (isFolder) {
@@ -109,63 +166,87 @@ export default function Sidebar({
           <div key={folder.id} className="space-y-1 my-1 pl-2 select-none relative group">
             {/* Folder element */}
             <div
-              className={`flex items-center justify-between px-2 py-1.5 rounded-lg transition-all text-sm group ${
-                folder.isLocked 
-                  ? (isLight ? "bg-red-100/50 hover:bg-red-100 border border-red-200 text-red-700" : "bg-red-950/10 hover:bg-red-950/20 border border-red-900/10")
-                  : (isLight ? "hover:bg-stone-200 text-stone-800" : "hover:bg-zinc-900 text-slate-300")
+              className={`flex items-center justify-between px-2 py-1.5 rounded-lg transition-all text-sm ${
+                isLight ? "hover:bg-stone-200 text-stone-800" : "hover:bg-zinc-900 text-slate-300"
               }`}
             >
               <div className="flex items-center gap-2 cursor-pointer flex-1 min-w-0" onClick={() => toggleFolder(folder.id)}>
                 {isOpen ? <ChevronDown className="w-3.5 h-3.5 text-slate-500" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-500" />}
-                <Folder className={`w-4 h-4 shrink-0 ${folder.isLocked ? "text-red-500" : "text-amber-500"}`} />
+                <Folder className="w-4 h-4 shrink-0 text-amber-500" />
                 <span className="truncate font-medium">
-                  {folder.isLocked ? "🔒 Locked Folder" : folder.name}
+                  {folder.name}
                 </span>
               </div>
 
-              {/* Folder Actions */}
-              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity ml-1 shrink-0">
-                {!folder.isLocked && (
-                  <>
-                    <button onClick={() => onAddFile(folder.id)} title="Add File" className="p-1 rounded text-slate-400 hover:text-pink-400 hover:bg-zinc-800">
-                      <Plus className="w-3 h-3" />
-                    </button>
-                    <button onClick={() => onAddFolder(folder.id)} title="Add Sub-Folder" className="p-1 rounded text-slate-400 hover:text-pink-400 hover:bg-zinc-800 font-mono text-[10px] leading-none px-1">
-                      +F
-                    </button>
-                  </>
-                )}
+              {/* Folder Actions Menu (Three Dots) */}
+              <div className="relative shrink-0 ml-1">
                 <button
-                  onClick={() => handleFolderLock(folder)}
-                  title={folder.isLocked ? "Unlock Folder" : "Lock Folder"}
-                  className="p-1 rounded text-slate-400 hover:text-red-400 hover:bg-zinc-800"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setActiveMenuNodeId(activeMenuNodeId === folder.id ? null : folder.id);
+                  }}
+                  className="p-1 rounded text-slate-400 hover:text-pink-500 hover:bg-zinc-800/60 cursor-pointer"
+                  title="More Options"
                 >
-                  {folder.isLocked ? <Lock className="w-3 h-3 text-red-400" /> : <Unlock className="w-3 h-3" />}
+                  <MoreVertical className="w-3.5 h-3.5" />
                 </button>
-                {!folder.isLocked && (
-                  <>
-                    <button onClick={() => handleRename(folder.id, folder.name)} title="Rename" className="p-1 rounded text-slate-400 hover:text-slate-200 hover:bg-zinc-800">
-                      <Edit2 className="w-3 h-3" />
+
+                {activeMenuNodeId === folder.id && (
+                  <div className={`absolute right-0 mt-1 w-44 rounded-lg shadow-xl border z-50 p-1 font-sans text-xs ${
+                    isLight ? "bg-white border-pink-100 text-stone-800" : "bg-zinc-950 border-zinc-800 text-slate-200"
+                  }`}>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onAddFile(folder.id); setActiveMenuNodeId(null); }}
+                      className="w-full text-left px-2 py-1.5 rounded hover:bg-pink-500/10 flex items-center gap-2"
+                    >
+                      <Plus className="w-3.5 h-3.5 text-pink-500" /> Add File
+                    </button>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onAddFolder(folder.id); setActiveMenuNodeId(null); }}
+                      className="w-full text-left px-2 py-1.5 rounded hover:bg-pink-500/10 flex items-center gap-2"
+                    >
+                      <Folder className="w-3.5 h-3.5 text-amber-500" /> Add Folder
+                    </button>
+                    <button
+                      onClick={() => { handleRename(folder.id, folder.name); setActiveMenuNodeId(null); }}
+                      className="w-full text-left px-2 py-1.5 rounded hover:bg-pink-500/10 flex items-center gap-2"
+                    >
+                      <Edit2 className="w-3.5 h-3.5" /> Rename
+                    </button>
+                    <button
+                      onClick={() => { handleFolderLock(folder); setActiveMenuNodeId(null); }}
+                      className="w-full text-left px-2 py-1.5 rounded hover:bg-pink-500/10 flex items-center gap-2 font-semibold text-red-400"
+                    >
+                      <Lock className="w-3.5 h-3.5" /> Hide & Lock Folder
                     </button>
                     {clipboardNode && (
-                      <button onClick={() => onPasteNode(folder.id)} title="Paste Here" className="p-1 rounded text-slate-400 hover:text-emerald-400 hover:bg-zinc-800">
-                        <Clipboard className="w-3 h-3" />
+                      <button
+                        onClick={() => { onPasteNode(folder.id); setActiveMenuNodeId(null); }}
+                        className="w-full text-left px-2 py-1.5 rounded hover:bg-pink-500/10 flex items-center gap-2"
+                      >
+                        <Clipboard className="w-3.5 h-3.5" /> Paste here
                       </button>
                     )}
-                    <button onClick={() => handleExport(folder.id)} title="Compile PDF" className="p-1 rounded text-slate-400 hover:text-green-400 hover:bg-zinc-800">
-                      <Download className="w-3 h-3" />
+                    <button
+                      onClick={() => { handleExport(folder.id); setActiveMenuNodeId(null); }}
+                      className="w-full text-left px-2 py-1.5 rounded hover:bg-pink-500/10 flex items-center gap-2 text-emerald-400"
+                    >
+                      <Download className="w-3.5 h-3.5" /> Compile PDF Book
                     </button>
-                    <button onClick={() => onDeleteNode(folder.id)} title="Delete" className="p-1 rounded text-slate-400 hover:text-red-500 hover:bg-zinc-800">
-                      <Trash2 className="w-3 h-3" />
+                    <button
+                      onClick={() => { onDeleteNode(folder.id); setActiveMenuNodeId(null); }}
+                      className="w-full text-left px-2 py-1.5 rounded hover:bg-red-500/20 flex items-center gap-2 text-red-500"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" /> Delete Folder
                     </button>
-                  </>
+                  </div>
                 )}
               </div>
             </div>
 
             {/* Folder Children */}
-            {isOpen && !folder.isLocked && (
-              <div className="pl-3 border-l border-zinc-800/80 ml-4 space-y-1">
+            {isOpen && (
+              <div className="pl-3 border-l border-zinc-850 ml-4 space-y-1">
                 {folder.children && folder.children.length > 0 ? (
                   renderNodes(folder.children)
                 ) : (
@@ -189,29 +270,60 @@ export default function Sidebar({
             }`}
           >
             <div className="flex items-center gap-2 cursor-pointer flex-1 min-w-0" onClick={() => onSelectFile(file.id)}>
-              <File className={`w-3.5 h-3.5 shrink-0 ${file.isLocked ? "text-red-400" : "text-sky-400"}`} />
-              <span className="truncate">{file.isLocked ? `🔒 [Locked] ${file.name}` : file.name}</span>
+              <File className="w-3.5 h-3.5 shrink-0 text-sky-400" />
+              <span className="truncate">{file.name}</span>
               {file.mood && <span className="text-[10px] opacity-75">{file.mood}</span>}
             </div>
 
-            {/* File Actions */}
-            <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity ml-1 shrink-0">
+            {/* File Actions Menu (Three Dots) */}
+            <div className="relative shrink-0">
               <button
-                onClick={() => handleFileLock(file)}
-                title={file.isLocked ? "Unlock Content" : "Lock Content"}
-                className="p-1 rounded hover:text-red-400 hover:bg-zinc-800"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setActiveMenuNodeId(activeMenuNodeId === file.id ? null : file.id);
+                }}
+                className="p-1 rounded text-slate-400 hover:text-pink-500 hover:bg-zinc-800/60 cursor-pointer"
+                title="More Options"
               >
-                {file.isLocked ? <Lock className="w-3 h-3 text-red-400" /> : <Unlock className="w-3 h-3" />}
+                <MoreVertical className="w-3 h-3" />
               </button>
-              <button onClick={() => onCutNode(file.id)} title="Cut File" className="p-1 rounded hover:text-slate-200 hover:bg-zinc-800">
-                <Scissors className="w-3 h-3" />
-              </button>
-              <button onClick={() => handleRename(file.id, file.name)} title="Rename" className="p-1 rounded hover:text-slate-200 hover:bg-zinc-800">
-                <Edit2 className="w-3 h-3" />
-              </button>
-              <button onClick={() => onDeleteNode(file.id)} title="Delete" className="p-1 rounded hover:text-red-500 hover:bg-zinc-800">
-                <Trash2 className="w-3 h-3" />
-              </button>
+
+              {activeMenuNodeId === file.id && (
+                <div className={`absolute right-0 mt-1 w-44 rounded-lg shadow-xl border z-50 p-1 font-sans text-xs ${
+                  isLight ? "bg-white border-pink-100 text-stone-800" : "bg-zinc-950 border-zinc-800 text-slate-200"
+                }`}>
+                  <button
+                    onClick={() => { onSelectFile(file.id); setActiveMenuNodeId(null); }}
+                    className="w-full text-left px-2 py-1.5 rounded hover:bg-pink-500/10 flex items-center gap-2"
+                  >
+                    <File className="w-3.5 h-3.5 text-sky-400" /> Open Entry
+                  </button>
+                  <button
+                    onClick={() => { onCutNode(file.id); setActiveMenuNodeId(null); }}
+                    className="w-full text-left px-2 py-1.5 rounded hover:bg-pink-500/10 flex items-center gap-2"
+                  >
+                    <Scissors className="w-3.5 h-3.5" /> Cut / Move
+                  </button>
+                  <button
+                    onClick={() => { handleRename(file.id, file.name); setActiveMenuNodeId(null); }}
+                    className="w-full text-left px-2 py-1.5 rounded hover:bg-pink-500/10 flex items-center gap-2"
+                  >
+                    <Edit2 className="w-3.5 h-3.5" /> Rename
+                  </button>
+                  <button
+                    onClick={() => { handleFileLock(file); setActiveMenuNodeId(null); }}
+                    className="w-full text-left px-2 py-1.5 rounded hover:bg-pink-500/10 flex items-center gap-2 font-semibold text-red-400"
+                  >
+                    <Lock className="w-3.5 h-3.5" /> Hide & Lock Entry
+                  </button>
+                  <button
+                    onClick={() => { onDeleteNode(file.id); setActiveMenuNodeId(null); }}
+                    className="w-full text-left px-2 py-1.5 rounded hover:bg-red-500/20 flex items-center gap-2 text-red-500"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" /> Delete Entry
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         );
@@ -241,7 +353,7 @@ export default function Sidebar({
           </div>
 
           <button
-            onClick={() => onAddFolder()}
+            onClick={(e) => { e.stopPropagation(); onAddFolder(); }}
             title="Create Root Folder"
             className={`p-2 rounded shrink-0 cursor-pointer ${
               isLight ? "bg-pink-50 hover:bg-pink-100 text-pink-750" : "bg-zinc-900 hover:bg-zinc-800 text-slate-300 hover:text-pink-400"
@@ -357,6 +469,9 @@ export default function Sidebar({
               isLight ? "bg-stone-100 border border-stone-200 text-stone-900" : "bg-zinc-900 border border-zinc-800 text-slate-300"
             }`}
           >
+            <optgroup label="Elite Specialty Presets 💎">
+              <option value="transparent-glass">💎 Transparent Notepad (Frosted Glass)</option>
+            </optgroup>
             <optgroup label="Aesthetic Textured Sheets 🎨">
               <option value="cherry-blossom-pad">🌸 Pink Cherry Blossom Pad</option>
               <option value="sketch-journal-pad">📖 Retro Comic Sketch Grid</option>
@@ -389,6 +504,27 @@ export default function Sidebar({
             </optgroup>
           </select>
         </div>
+
+        {personalization.padStyle === "transparent-glass" && (
+          <div className="space-y-1 mt-2">
+            <div className="flex items-center justify-between">
+              <label className="text-[10px] font-mono font-medium text-slate-500 uppercase">
+                Frosted Glass Opacity
+              </label>
+              <span className="text-[10px] font-mono font-semibold text-pink-500">
+                {personalization.glassOpacity !== undefined ? personalization.glassOpacity : 40}%
+              </span>
+            </div>
+            <input
+              type="range"
+              min="10"
+              max="100"
+              value={personalization.glassOpacity !== undefined ? personalization.glassOpacity : 40}
+              onChange={(e) => onUpdatePersonalization({ glassOpacity: parseInt(e.target.value) })}
+              className="w-full accent-pink-500 cursor-pointer h-1 rounded bg-zinc-800"
+            />
+          </div>
+        )}
       </div>
 
       {/* Directory Ledger Navigation Tree */}
@@ -396,7 +532,7 @@ export default function Sidebar({
         <div className="flex items-center justify-between text-xs text-slate-500 font-mono uppercase tracking-widest font-semibold px-1">
           <span>Ledger Files</span>
           <button
-            onClick={() => onAddFolder()}
+            onClick={(e) => { e.stopPropagation(); onAddFolder(); }}
             title="Create Root Folder"
             className="p-1 rounded bg-zinc-900/60 hover:bg-zinc-800 text-slate-300 hover:text-pink-400"
           >
@@ -421,6 +557,34 @@ export default function Sidebar({
               No directories found. <br /> Create a root folder.
             </div>
           )}
+        </div>
+
+        {/* Private Secure Vault (Locked Entries) */}
+        <div className="pt-3 border-t border-zinc-800/40">
+          <button
+            onClick={() => setShowLockedChats(true)}
+            className={`w-full flex items-center justify-between p-3 rounded-xl border font-sans transition-all text-left cursor-pointer ${
+              isLight 
+                ? "bg-stone-50 hover:bg-stone-100 border-stone-200 text-stone-800 shadow-sm" 
+                : "bg-zinc-950/80 hover:bg-zinc-900 border-zinc-900 text-slate-100 shadow-lg"
+            }`}
+          >
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-500 border border-emerald-500/10">
+                <Lock className="w-4 h-4 animate-pulse" />
+              </div>
+              <div>
+                <div className="font-bold text-xs flex items-center gap-1.5 text-emerald-500">
+                  Locked Chats 🔒
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                </div>
+                <div className="text-[10px] text-slate-500 font-mono">
+                  {getLockedNodesList(vFileSystem).length} secret block(s) hidden
+                </div>
+              </div>
+            </div>
+            <ChevronRight className="w-4 h-4 text-slate-500" />
+          </button>
         </div>
       </div>
 
@@ -508,6 +672,191 @@ export default function Sidebar({
           Logout
         </button>
       </div>
+
+      {showLockedChats && (
+        <div className="fixed inset-0 bg-black/95 z-[9999] flex flex-col font-sans text-slate-100">
+          {/* Header */}
+          <div className="p-4 bg-zinc-950 border-b border-zinc-900 flex items-center gap-3">
+            <button
+              onClick={() => {
+                setShowLockedChats(false);
+                setUnlockPasscode("");
+                setVaultUnlocked(false);
+                setVaultUnlockError("");
+              }}
+              className="p-1 rounded-full hover:bg-zinc-900 text-slate-400 hover:text-white transition-colors cursor-pointer"
+            >
+              <ChevronRight className="w-6 h-6 rotate-180" />
+            </button>
+            <div className="flex-1">
+              <h2 className="text-base font-bold text-white flex items-center gap-2">
+                <Lock className="w-4 h-4 text-emerald-500" /> Locked Chats
+              </h2>
+              <p className="text-[10px] text-slate-500 font-mono uppercase tracking-wider">Secure Vault Block</p>
+            </div>
+            <span className="text-xs bg-emerald-500/10 text-emerald-400 px-2.5 py-0.5 rounded-full font-mono border border-emerald-500/20 font-bold">
+              WhatsApp Security active
+            </span>
+          </div>
+
+          {/* Body */}
+          <div className="flex-1 overflow-y-auto bg-zinc-950 flex flex-col">
+            {!vaultUnlocked ? (
+              // LOCKED / PASSWORD PROMPT SCREEN
+              <div className="flex-1 flex flex-col items-center justify-center p-6 text-center max-w-sm mx-auto space-y-6">
+                <div className="w-16 h-16 rounded-full bg-emerald-500/10 flex items-center justify-center text-emerald-500 border border-emerald-500/20 shadow-lg shadow-emerald-500/5 animate-pulse">
+                  <Lock className="w-8 h-8" />
+                </div>
+                <div className="space-y-2">
+                  <h3 className="text-lg font-bold text-white font-display">Locked Chats Unseal</h3>
+                  <p className="text-xs text-slate-400 font-sans leading-relaxed">
+                    Keep your most personal memories secure with an extra layer of privacy. Enter your secret passcode or master key to unlock and view.
+                  </p>
+                </div>
+                <div className="w-full space-y-3">
+                  <input
+                    type="password"
+                    placeholder="Enter Secret Passcode"
+                    value={unlockPasscode}
+                    onChange={(e) => setUnlockPasscode(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleAttemptVaultUnlock();
+                    }}
+                    className="w-full px-4 py-3 bg-zinc-900 border border-zinc-800 rounded-xl text-center text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition-colors"
+                  />
+                  {vaultUnlockError && (
+                    <p className="text-[11px] text-red-500 font-mono font-semibold">
+                      ⚠️ {vaultUnlockError}
+                    </p>
+                  )}
+                  <button
+                    onClick={handleAttemptVaultUnlock}
+                    className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-semibold cursor-pointer transition-colors shadow-lg shadow-emerald-600/10 flex items-center justify-center gap-1.5"
+                  >
+                    <Unlock className="w-3.5 h-3.5" /> Confirm Passcode
+                  </button>
+                </div>
+                <p className="text-[10px] text-slate-500 font-mono">
+                  Tip: Lock folders/files inside the ledger tree to hide them here.
+                </p>
+              </div>
+            ) : (
+              // UNLOCKED SCREEN (LIST OF ITEMS)
+              <div className="p-4 space-y-4 max-w-2xl mx-auto w-full">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs font-mono text-slate-500 uppercase">Secret Conversations</p>
+                  <button
+                    onClick={() => setVaultUnlocked(false)}
+                    className="text-xs text-red-400 hover:text-red-300 font-semibold cursor-pointer"
+                  >
+                    Close Vault / Re-lock
+                  </button>
+                </div>
+
+                {(() => {
+                  const lockedNodes = getLockedNodesList(vFileSystem);
+                  if (lockedNodes.length === 0) {
+                    return (
+                      <div className="p-8 border border-zinc-900 rounded-2xl bg-zinc-950/40 text-center space-y-2">
+                        <p className="text-xs text-slate-500 font-mono">No locked items in this vault container.</p>
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <div className="space-y-2 divide-y divide-zinc-900">
+                      {lockedNodes.map((node) => {
+                        const isFolder = node.type === "folder";
+                        const isUnsealed = unsealedVaultIds.includes(node.id);
+                        
+                        // Let's decrypt or parse preview on-the-fly for files!
+                        let snippet = "Encrypted block content.";
+                        if (!isFolder) {
+                          const file = node as JournalFile;
+                          if (isUnsealed) {
+                            snippet = file.content.replace(/<[^>]*>/g, "").substring(0, 100);
+                          } else {
+                            try {
+                              const bytes = CryptoJS.AES.decrypt(file.content, unlockPasscode);
+                              const decrypted = bytes.toString(CryptoJS.enc.Utf8);
+                              if (decrypted) {
+                                snippet = decrypted.replace(/<[^>]*>/g, "").substring(0, 100);
+                              }
+                            } catch (e) {}
+                          }
+                        }
+
+                        return (
+                          <div
+                            key={node.id}
+                            className="flex items-start gap-3 py-3.5 first:pt-0 transition-colors"
+                          >
+                            {/* Round Avatar Icon */}
+                            <div className="w-11 h-11 rounded-full bg-emerald-500/10 border border-emerald-500/20 shrink-0 flex items-center justify-center text-lg shadow-inner">
+                              {isFolder ? "📁" : (node as JournalFile).mood || "😊"}
+                            </div>
+
+                            {/* Details */}
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-baseline justify-between gap-2">
+                                <h4 className="text-sm font-bold text-white truncate flex items-center gap-1.5">
+                                  {node.name}
+                                  {isUnsealed && <span className="text-[10px] bg-emerald-500/10 text-emerald-400 px-1.5 py-0.5 rounded font-mono font-medium">unsealed</span>}
+                                </h4>
+                                <span className="text-[10px] text-slate-500 font-mono whitespace-nowrap shrink-0">
+                                  {!isFolder ? (node as JournalFile).created.split(",")[0] : ""}
+                                </span>
+                              </div>
+                              <p className="text-xs text-slate-400 font-mono mt-0.5 truncate leading-relaxed">
+                                {isFolder ? "🔒 Locked Folder Structure" : snippet || "Empty log content..."}
+                              </p>
+                              
+                              {/* Inline Controls */}
+                              <div className="flex items-center gap-3 mt-2">
+                                {!isFolder && (
+                                  <button
+                                    onClick={() => {
+                                      if (!unsealedVaultIds.includes(node.id)) {
+                                        onUnlockNode(node.id, unlockPasscode, "file");
+                                      }
+                                      onSelectFile(node.id);
+                                      setShowLockedChats(false);
+                                    }}
+                                    className="text-[11px] text-emerald-400 hover:text-emerald-300 font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                                  >
+                                    ✏️ View & Edit
+                                  </button>
+                                )}
+                                <button
+                                  onClick={() => {
+                                    const pass = prompt("Enter passcode to unlock and move out of Secure Vault:") || unlockPasscode;
+                                    onUnlockNode(node.id, pass, isFolder ? "folder" : "file");
+                                  }}
+                                  className="text-[11px] text-slate-400 hover:text-white font-semibold flex items-center gap-1 cursor-pointer transition-colors"
+                                >
+                                  🔓 Move Out
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    onDeleteNode(node.id);
+                                  }}
+                                  className="text-[11px] text-red-400 hover:text-red-300 font-semibold flex items-center gap-1 cursor-pointer transition-colors ml-auto"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" /> Purge
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

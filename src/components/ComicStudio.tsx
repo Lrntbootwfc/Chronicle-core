@@ -39,7 +39,9 @@ export default function ComicStudio({ vFileSystem }: ComicStudioProps) {
       }
       if (node.type === "file") {
         const file = node as JournalFile;
-        if (file.comic && file.comic !== "") {
+        // Include if it has an illustration OR if it is named exactly "cover page" (case-insensitive)
+        const isCover = file.name.trim().toLowerCase() === "cover page";
+        if ((file.comic && file.comic !== "") || isCover) {
           list.push(file);
         }
       } else if (node.type === "folder" && node.children) {
@@ -52,7 +54,7 @@ export default function ComicStudio({ vFileSystem }: ComicStudioProps) {
   const allComics = extractUnlockedComicFiles(vFileSystem);
 
   // Filter comics based on selected month & year
-  const filteredComics = allComics.filter((c) => {
+  const rawFilteredComics = allComics.filter((c) => {
     try {
       const createdDate = new Date(c.created);
       const yearMatches = createdDate.getFullYear().toString() === selectedYear;
@@ -61,6 +63,20 @@ export default function ComicStudio({ vFileSystem }: ComicStudioProps) {
       return yearMatches && monthMatches;
     } catch (e) {
       return false;
+    }
+  });
+
+  // Apply Smart PDF Compiler (Override Rules):
+  // Force "cover page" entry (case-insensitive) to index 0, bypassing chronology.
+  const filteredComics = [...rawFilteredComics].sort((a, b) => {
+    const isACover = a.name.trim().toLowerCase() === "cover page";
+    const isBCover = b.name.trim().toLowerCase() === "cover page";
+    if (isACover && !isBCover) return -1;
+    if (!isACover && isBCover) return 1;
+    try {
+      return new Date(a.created).getTime() - new Date(b.created).getTime();
+    } catch {
+      return 0;
     }
   });
 
@@ -102,9 +118,32 @@ export default function ComicStudio({ vFileSystem }: ComicStudioProps) {
         pdf.setFontSize(9);
         pdf.text(`PAGE CELL REF: ${comic.name.toUpperCase()}`, 14, 21);
 
-        // Adding generated base64 image data
+        // Adding generated base64 image data / Cover Page layout
         try {
-          if (comic.comic.startsWith("data:image/svg+xml;base64,")) {
+          const isCover = comic.name.trim().toLowerCase() === "cover page";
+          if (isCover && (!comic.comic || comic.comic === "")) {
+            // Draw a spectacular dedicated Cover Page in the PDF!
+            pdf.setFillColor(24, 24, 27); // Dark gray card background
+            pdf.rect(14, 30, 182, 182, "F");
+            pdf.setDrawColor(249, 115, 22); // Orange border
+            pdf.setLineWidth(2);
+            pdf.rect(14, 30, 182, 182);
+
+            pdf.setTextColor(255, 255, 255);
+            pdf.setFont("helvetica", "bold");
+            pdf.setFontSize(24);
+            pdf.text("CHRONICLE JOURNAL BOOK", 105, 95, { align: "center" });
+            
+            pdf.setTextColor(249, 115, 22);
+            pdf.setFontSize(14);
+            pdf.text("OFFICIAL COVER PAGE", 105, 110, { align: "center" });
+
+            pdf.setTextColor(156, 163, 175);
+            pdf.setFont("helvetica", "italic");
+            pdf.setFontSize(11);
+            pdf.text(`Compiled Volume: ${selectedMonth === "all" ? "Annual" : "Monthly"} Ledger`, 105, 130, { align: "center" });
+            pdf.text(`Year: ${selectedYear}`, 105, 138, { align: "center" });
+          } else if (comic.comic && comic.comic.startsWith("data:image/svg+xml;base64,")) {
             // Since jsPDF doesn't natively parse SVG vector sources directly, we can draw a high-fidelity panel!
             pdf.setFillColor(248, 250, 252);
             pdf.rect(14, 30, 182, 182, "F");

@@ -58,18 +58,58 @@ export default function InsightsDashboard({ vFileSystem }: InsightsDashboardProp
 
   // Mood to level helper (Numeric level for charting)
   const moodLevels: Record<string, number> = {
-    "😊": 4, // Joy
-    "💻": 3, // Code
-    "🌌": 5, // Zen (Highest peace)
-    "⚡": 2, // Chaos
+    "😊": 4.5, // Joy / Sunny
+    "💻": 3.5, // Code
+    "🌌": 5.0, // Zen
+    "⚡": 2.5, // Chaos / Lightning
+    "😭": 1.5, // Sad
+    "🤯": 4.0, // Mindblown
+    "😡": 1.0, // Angry
+    "😴": 2.0, // Tired
+    "🥳": 5.0, // Excited
+    "🤔": 3.0, // Thinking
+    "🥰": 5.0, // Loved
+    "🤢": 1.8, // Sick
   };
 
-  const weatherPatterns = [
-    { weather: "Sunny ☀️", moodVal: 4.5, count: 12, color: "#f59e0b" },
-    { weather: "Rainy 🌧️", moodVal: 3.2, count: 8, color: "#06b6d4" },
-    { weather: "Windy 🍃", moodVal: 3.8, count: 6, color: "#10b981" },
-    { weather: "Cloudy ☁️", moodVal: 3.5, count: 10, color: "#64748b" },
+  const weatherTypes = [
+    { weather: "Sunny ☀️", color: "#f59e0b" },
+    { weather: "Rainy 🌧️", color: "#3b82f6" },
+    { weather: "Windy 🍃", color: "#10b981" },
+    { weather: "Cloudy ☁️", color: "#64748b" },
+    { weather: "Snowy ❄️", color: "#06b6d4" },
+    { weather: "Stormy ⛈️", color: "#8b5cf6" },
   ];
+
+  const weatherMap: Record<string, { totalMood: number; count: number }> = {
+    "Sunny ☀️": { totalMood: 0, count: 0 },
+    "Rainy 🌧️": { totalMood: 0, count: 0 },
+    "Windy 🍃": { totalMood: 0, count: 0 },
+    "Cloudy ☁️": { totalMood: 0, count: 0 },
+    "Snowy ❄️": { totalMood: 0, count: 0 },
+    "Stormy ⛈️": { totalMood: 0, count: 0 },
+  };
+
+  entries.forEach((entry: any) => {
+    const w = entry.weather || "Sunny ☀️";
+    const moodVal = moodLevels[entry.mood] || 3.0;
+    if (weatherMap[w]) {
+      weatherMap[w].totalMood += moodVal;
+      weatherMap[w].count += 1;
+    } else {
+      weatherMap[w] = { totalMood: moodVal, count: 1 };
+    }
+  });
+
+  const weatherPatterns = weatherTypes.map((t) => {
+    const stats = weatherMap[t.weather] || { totalMood: 0, count: 0 };
+    return {
+      weather: t.weather,
+      moodVal: stats.count > 0 ? parseFloat((stats.totalMood / stats.count).toFixed(2)) : 0,
+      count: stats.count,
+      color: t.color
+    };
+  });
 
   // Correlating recent moods
   const recentProseData = entries.map((entry) => {

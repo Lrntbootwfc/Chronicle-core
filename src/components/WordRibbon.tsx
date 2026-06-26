@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import {
   Bold, Italic, Underline, Strikethrough, AlignLeft, AlignCenter, AlignRight, AlignJustify,
-  List, ListOrdered, Clipboard, Code, Quote, Sliders, Sparkles, Smile
+  List, ListOrdered, Clipboard, Code, Quote, Sliders, Sparkles, Smile, Undo, Redo
 } from "lucide-react";
 import { Personalization } from "../types";
 
@@ -12,6 +12,8 @@ interface WordRibbonProps {
   onInjectSticker: (emoji: string) => void;
   onInsertCodeBlock: (lang: string) => void;
   onInsertTemplate: (name: string) => void;
+  onUndo?: () => void;
+  onRedo?: () => void;
 }
 
 export default function WordRibbon({
@@ -21,8 +23,13 @@ export default function WordRibbon({
   onInjectSticker,
   onInsertCodeBlock,
   onInsertTemplate,
+  onUndo,
+  onRedo,
 }: WordRibbonProps) {
   const [activeTab, setActiveTab] = useState<"home" | "insert" | "layout" | "developer" | "stickers">("home");
+
+  // Determine light mode based on wallpaper theme
+  const isLight = ["light", "minimalist", "blossom", "lavender", "meadow", "linen"].includes(personalization.outerWallpaper);
 
   // Font selections
   const fonts = [
@@ -54,17 +61,27 @@ export default function WordRibbon({
   ];
 
   return (
-    <div className="w-full bg-zinc-950 border-b border-zinc-900 flex flex-col shrink-0 text-slate-300">
+    <div className={`w-full flex flex-col shrink-0 transition-all duration-300 ${
+      isLight 
+        ? "bg-white/20 border-b border-pink-200/20 text-stone-900 backdrop-blur-md" 
+        : "bg-black/15 border-b border-zinc-900/30 text-slate-100 backdrop-blur-md"
+    }`}>
       {/* Ribbon Tab Bar */}
-      <div className="flex bg-zinc-950 px-4 pt-1 border-b border-zinc-900/60 text-xs">
+      <div className={`flex px-4 pt-1 border-b text-xs transition-colors ${
+        isLight ? "bg-white/5 border-pink-200/10" : "bg-black/5 border-zinc-900/10"
+      }`}>
         {(["home", "insert", "layout", "developer", "stickers"] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
             className={`px-4 py-2.5 font-medium border-t-2 capitalize transition-all cursor-pointer ${
               activeTab === tab
-                ? "border-orange-500 text-orange-400 bg-zinc-900/40 font-semibold"
-                : "border-transparent text-slate-500 hover:text-slate-300"
+                ? isLight
+                  ? "border-pink-500 text-pink-600 bg-white/40 font-semibold"
+                  : "border-orange-500 text-orange-400 bg-zinc-900/40 font-semibold"
+                : isLight
+                  ? "border-transparent text-stone-500 hover:text-stone-800"
+                  : "border-transparent text-slate-500 hover:text-slate-300"
             }`}
           >
             {tab === "layout" ? "Page Layout" : tab}
@@ -73,22 +90,28 @@ export default function WordRibbon({
       </div>
 
       {/* Ribbon Control Deck */}
-      <div className="p-3 bg-zinc-900/30 flex items-center gap-6 overflow-x-auto h-[74px]">
+      <div className={`p-3 flex items-center gap-6 overflow-x-auto h-[74px] ${
+        isLight ? "bg-white/5" : "bg-zinc-900/10"
+      }`}>
         
         {/* HOME TAB */}
         {activeTab === "home" && (
-          <div className="flex items-center gap-6 divide-x divide-zinc-800">
+          <div className={`flex items-center gap-6 divide-x ${isLight ? "divide-pink-100/50" : "divide-zinc-800"}`}>
             {/* Font Pairings */}
             <div className="flex items-center gap-2 pr-4">
               <div className="flex flex-col gap-1">
-                <span className="text-[10px] font-mono text-slate-500 uppercase font-semibold">Font Family</span>
+                <span className={`text-[10px] font-mono uppercase font-semibold ${isLight ? "text-stone-500" : "text-slate-500"}`}>Font Family</span>
                 <select
                   value={personalization.typography}
                   onChange={(e) => {
                     onUpdatePersonalization({ typography: e.target.value });
                     onExecuteCommand("fontName", e.target.value);
                   }}
-                  className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs outline-none focus:border-orange-500 max-w-[140px]"
+                  className={`border rounded px-2 py-1 text-xs outline-none focus:border-pink-500 max-w-[140px] ${
+                    isLight 
+                      ? "bg-white border-pink-100 text-stone-800" 
+                      : "bg-zinc-900 border-zinc-800 text-slate-300"
+                  }`}
                 >
                   {fonts.map((f) => (
                     <option key={f.val} value={f.val}>{f.name}</option>
@@ -99,26 +122,47 @@ export default function WordRibbon({
 
             {/* Character styling */}
             <div className="flex flex-col gap-1 px-4">
-              <span className="text-[10px] font-mono text-slate-500 uppercase font-semibold">Styles</span>
+              <span className={`text-[10px] font-mono uppercase font-semibold ${isLight ? "text-stone-500" : "text-slate-500"}`}>Styles</span>
               <div className="flex items-center gap-1">
-                <button onClick={() => onExecuteCommand("bold")} className="p-1.5 rounded hover:bg-zinc-800 text-slate-300" title="Bold">
+                <button onClick={() => onExecuteCommand("bold")} className={`p-1.5 rounded transition-all cursor-pointer ${isLight ? "hover:bg-pink-100/60 text-stone-700" : "hover:bg-zinc-800 text-slate-300"}`} title="Bold">
                   <Bold className="w-4 h-4" />
                 </button>
-                <button onClick={() => onExecuteCommand("italic")} className="p-1.5 rounded hover:bg-zinc-800 text-slate-300" title="Italic">
+                <button onClick={() => onExecuteCommand("italic")} className={`p-1.5 rounded transition-all cursor-pointer ${isLight ? "hover:bg-pink-100/60 text-stone-700" : "hover:bg-zinc-800 text-slate-300"}`} title="Italic">
                   <Italic className="w-4 h-4" />
                 </button>
-                <button onClick={() => onExecuteCommand("underline")} className="p-1.5 rounded hover:bg-zinc-800 text-slate-300" title="Underline">
+                <button onClick={() => onExecuteCommand("underline")} className={`p-1.5 rounded transition-all cursor-pointer ${isLight ? "hover:bg-pink-100/60 text-stone-700" : "hover:bg-zinc-800 text-slate-300"}`} title="Underline">
                   <Underline className="w-4 h-4" />
                 </button>
-                <button onClick={() => onExecuteCommand("strikeThrough")} className="p-1.5 rounded hover:bg-zinc-800 text-slate-300" title="StrikeThrough">
+                <button onClick={() => onExecuteCommand("strikeThrough")} className={`p-1.5 rounded transition-all cursor-pointer ${isLight ? "hover:bg-pink-100/60 text-stone-700" : "hover:bg-zinc-800 text-slate-300"}`} title="StrikeThrough">
                   <Strikethrough className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Undo / Redo Operations */}
+            <div className="flex flex-col gap-1 px-4">
+              <span className={`text-[10px] font-mono uppercase font-semibold ${isLight ? "text-stone-500" : "text-slate-500"}`}>History</span>
+              <div className="flex items-center gap-1">
+                <button 
+                  onClick={onUndo} 
+                  className={`p-1.5 rounded transition-all cursor-pointer flex items-center justify-center ${isLight ? "hover:bg-pink-100/60 text-stone-700" : "hover:bg-zinc-800 text-slate-300"}`} 
+                  title="Undo (Ctrl+Z)"
+                >
+                  <Undo className="w-4 h-4" />
+                </button>
+                <button 
+                  onClick={onRedo} 
+                  className={`p-1.5 rounded transition-all cursor-pointer flex items-center justify-center ${isLight ? "hover:bg-pink-100/60 text-stone-700" : "hover:bg-zinc-800 text-slate-300"}`} 
+                  title="Redo (Ctrl+Y)"
+                >
+                  <Redo className="w-4 h-4" />
                 </button>
               </div>
             </div>
 
             {/* Text and highlight colors */}
             <div className="flex flex-col gap-1 px-4">
-              <span className="text-[10px] font-mono text-slate-500 uppercase font-semibold">Ink Palette</span>
+              <span className={`text-[10px] font-mono uppercase font-semibold ${isLight ? "text-stone-500" : "text-slate-500"}`}>Ink Palette</span>
               <div className="flex items-center gap-3">
                 <div className="flex items-center gap-1" title="Font Color">
                   <span className="text-[11px] font-mono">A:</span>
@@ -142,18 +186,18 @@ export default function WordRibbon({
 
             {/* Paragraph alignments */}
             <div className="flex flex-col gap-1 px-4">
-              <span className="text-[10px] font-mono text-slate-500 uppercase font-semibold">Alignments</span>
+              <span className={`text-[10px] font-mono uppercase font-semibold ${isLight ? "text-stone-500" : "text-slate-500"}`}>Alignments</span>
               <div className="flex items-center gap-1">
-                <button onClick={() => onExecuteCommand("justifyLeft")} className="p-1.5 rounded hover:bg-zinc-800 text-slate-300">
+                <button onClick={() => onExecuteCommand("justifyLeft")} className={`p-1.5 rounded transition-all cursor-pointer ${isLight ? "hover:bg-pink-100/60 text-stone-700" : "hover:bg-zinc-800 text-slate-300"}`}>
                   <AlignLeft className="w-4 h-4" />
                 </button>
-                <button onClick={() => onExecuteCommand("justifyCenter")} className="p-1.5 rounded hover:bg-zinc-800 text-slate-300">
+                <button onClick={() => onExecuteCommand("justifyCenter")} className={`p-1.5 rounded transition-all cursor-pointer ${isLight ? "hover:bg-pink-100/60 text-stone-700" : "hover:bg-zinc-800 text-slate-300"}`}>
                   <AlignCenter className="w-4 h-4" />
                 </button>
-                <button onClick={() => onExecuteCommand("justifyRight")} className="p-1.5 rounded hover:bg-zinc-800 text-slate-300">
+                <button onClick={() => onExecuteCommand("justifyRight")} className={`p-1.5 rounded transition-all cursor-pointer ${isLight ? "hover:bg-pink-100/60 text-stone-700" : "hover:bg-zinc-800 text-slate-300"}`}>
                   <AlignRight className="w-4 h-4" />
                 </button>
-                <button onClick={() => onExecuteCommand("justifyFull")} className="p-1.5 rounded hover:bg-zinc-800 text-slate-300">
+                <button onClick={() => onExecuteCommand("justifyFull")} className={`p-1.5 rounded transition-all cursor-pointer ${isLight ? "hover:bg-pink-100/60 text-stone-700" : "hover:bg-zinc-800 text-slate-300"}`}>
                   <AlignJustify className="w-4 h-4" />
                 </button>
               </div>
@@ -161,12 +205,12 @@ export default function WordRibbon({
 
             {/* Indenting / Lists */}
             <div className="flex flex-col gap-1 px-4">
-              <span className="text-[10px] font-mono text-slate-500 uppercase font-semibold">Lists</span>
+              <span className={`text-[10px] font-mono uppercase font-semibold ${isLight ? "text-stone-500" : "text-slate-500"}`}>Lists</span>
               <div className="flex items-center gap-1.5">
-                <button onClick={() => onExecuteCommand("insertUnorderedList")} className="p-1.5 rounded hover:bg-zinc-800 text-slate-300" title="Bullet List">
+                <button onClick={() => onExecuteCommand("insertUnorderedList")} className={`p-1.5 rounded transition-all cursor-pointer ${isLight ? "hover:bg-pink-100/60 text-stone-700" : "hover:bg-zinc-800 text-slate-300"}`} title="Bullet List">
                   <List className="w-4 h-4" />
                 </button>
-                <button onClick={() => onExecuteCommand("insertOrderedList")} className="p-1.5 rounded hover:bg-zinc-800 text-slate-300" title="Numbered List">
+                <button onClick={() => onExecuteCommand("insertOrderedList")} className={`p-1.5 rounded transition-all cursor-pointer ${isLight ? "hover:bg-pink-100/60 text-stone-700" : "hover:bg-zinc-800 text-slate-300"}`} title="Numbered List">
                   <ListOrdered className="w-4 h-4" />
                 </button>
               </div>
@@ -176,12 +220,12 @@ export default function WordRibbon({
 
         {/* INSERT TAB */}
         {activeTab === "insert" && (
-          <div className="flex items-center gap-6 divide-x divide-zinc-800">
+          <div className={`flex items-center gap-6 divide-x ${isLight ? "divide-pink-100/50" : "divide-zinc-800"}`}>
             {/* Quick objects */}
             <div className="flex flex-col gap-1 pr-4">
-              <span className="text-[10px] font-mono text-slate-500 uppercase font-semibold">Add Layout Blocks</span>
+              <span className={`text-[10px] font-mono uppercase font-semibold ${isLight ? "text-stone-500" : "text-slate-500"}`}>Add Layout Blocks</span>
               <div className="flex items-center gap-2">
-                <button onClick={() => onExecuteCommand("insertHorizontalRule")} className="px-3 py-1 bg-zinc-900 rounded border border-zinc-800 hover:bg-zinc-800 text-xs font-medium flex items-center gap-1.5">
+                <button onClick={() => onExecuteCommand("insertHorizontalRule")} className={`px-3 py-1 rounded border hover:bg-pink-100/10 text-xs font-medium flex items-center gap-1.5 cursor-pointer ${isLight ? "bg-white border-pink-100 text-stone-800" : "bg-zinc-900 border-zinc-800 text-slate-300 hover:bg-zinc-800"}`}>
                   <Sliders className="w-3.5 h-3.5" /> Horizontal Rule
                 </button>
                 <button
@@ -189,7 +233,7 @@ export default function WordRibbon({
                     const blockquote = `<blockquote>"${window.getSelection()?.toString() || 'Add editorial blockquote here'}"</blockquote>`;
                     onExecuteCommand("insertHTML", blockquote);
                   }}
-                  className="px-3 py-1 bg-zinc-900 rounded border border-zinc-800 hover:bg-zinc-800 text-xs font-medium flex items-center gap-1.5"
+                  className={`px-3 py-1 rounded border hover:bg-pink-100/10 text-xs font-medium flex items-center gap-1.5 cursor-pointer ${isLight ? "bg-white border-pink-100 text-stone-800" : "bg-zinc-900 border-zinc-800 text-slate-300 hover:bg-zinc-800"}`}
                 >
                   <Quote className="w-3.5 h-3.5" /> Blockquote
                 </button>
@@ -198,14 +242,14 @@ export default function WordRibbon({
 
             {/* Copy Clipboard block */}
             <div className="flex flex-col gap-1 px-4">
-              <span className="text-[10px] font-mono text-slate-500 uppercase font-semibold">Copy Utility</span>
+              <span className={`text-[10px] font-mono uppercase font-semibold ${isLight ? "text-stone-500" : "text-slate-500"}`}>Copy Utility</span>
               <button
                 onClick={() => {
                   const contentText = document.getElementById("editorEngine")?.innerText || "";
                   navigator.clipboard.writeText(contentText);
                   alert("Copied raw text to clipboard!");
                 }}
-                className="px-3 py-1.5 bg-orange-500 hover:bg-orange-600 rounded text-black font-semibold text-xs flex items-center gap-1.5"
+                className="px-3 py-1.5 bg-orange-500 hover:bg-orange-600 rounded text-black font-semibold text-xs flex items-center gap-1.5 cursor-pointer shadow"
               >
                 <Clipboard className="w-4 h-4" /> Copy Entire Pad
               </button>
@@ -215,14 +259,16 @@ export default function WordRibbon({
 
         {/* PAGE LAYOUT TAB */}
         {activeTab === "layout" && (
-          <div className="flex items-center gap-6 divide-x divide-zinc-800">
+          <div className={`flex items-center gap-6 divide-x ${isLight ? "divide-pink-100/50" : "divide-zinc-800"}`}>
             {/* Print Margins */}
             <div className="flex flex-col gap-1 pr-4">
-              <span className="text-[10px] font-mono text-slate-500 uppercase font-semibold">Pad Margin</span>
+              <span className={`text-[10px] font-mono uppercase font-semibold ${isLight ? "text-stone-500" : "text-slate-500"}`}>Pad Margin</span>
               <select
                 value={personalization.margins}
                 onChange={(e) => onUpdatePersonalization({ margins: e.target.value })}
-                className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs outline-none focus:border-orange-500"
+                className={`border rounded px-2 py-1 text-xs outline-none focus:border-pink-500 ${
+                  isLight ? "bg-white border-pink-100 text-stone-800" : "bg-zinc-900 border-zinc-800 text-slate-300"
+                }`}
               >
                 <option value="60px 55px">Standard Layout (Default)</option>
                 <option value="30px 20px">Narrow Print Margins</option>
@@ -232,11 +278,13 @@ export default function WordRibbon({
 
             {/* Line spacing */}
             <div className="flex flex-col gap-1 px-4">
-              <span className="text-[10px] font-mono text-slate-500 uppercase font-semibold">Line Height</span>
+              <span className={`text-[10px] font-mono uppercase font-semibold ${isLight ? "text-stone-500" : "text-slate-500"}`}>Line Height</span>
               <select
                 value={personalization.lineSpacing}
                 onChange={(e) => onUpdatePersonalization({ lineSpacing: e.target.value })}
-                className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs outline-none focus:border-orange-500"
+                className={`border rounded px-2 py-1 text-xs outline-none focus:border-pink-500 ${
+                  isLight ? "bg-white border-pink-100 text-stone-800" : "bg-zinc-900 border-zinc-800 text-slate-300"
+                }`}
               >
                 <option value="1.5">Compact Single Spacing (1.5)</option>
                 <option value="1.8">Editorial Double Spacing (1.8)</option>
@@ -246,17 +294,21 @@ export default function WordRibbon({
 
             {/* Custom page padding */}
             <div className="flex flex-col gap-1 px-4">
-              <span className="text-[10px] font-mono text-slate-500 uppercase font-semibold">Pad Orientation</span>
+              <span className={`text-[10px] font-mono uppercase font-semibold ${isLight ? "text-stone-500" : "text-slate-500"}`}>Pad Orientation</span>
               <div className="flex gap-1">
                 <button
                   onClick={() => onUpdatePersonalization({ padding: "500px" })}
-                  className="px-2.5 py-1 bg-zinc-900 border border-zinc-800 rounded text-[11px] hover:bg-zinc-800"
+                  className={`px-2.5 py-1 border rounded text-[11px] hover:bg-pink-100/10 cursor-pointer ${
+                    isLight ? "bg-white border-pink-100 text-stone-700" : "bg-zinc-900 border-zinc-800 text-slate-300 hover:bg-zinc-800"
+                  }`}
                 >
                   Portrait Sheet
                 </button>
                 <button
                   onClick={() => onUpdatePersonalization({ padding: "100%" })}
-                  className="px-2.5 py-1 bg-zinc-900 border border-zinc-800 rounded text-[11px] hover:bg-zinc-800"
+                  className={`px-2.5 py-1 border rounded text-[11px] hover:bg-pink-100/10 cursor-pointer ${
+                    isLight ? "bg-white border-pink-100 text-stone-700" : "bg-zinc-900 border-zinc-800 text-slate-300 hover:bg-zinc-800"
+                  }`}
                 >
                   Landscape Sheet
                 </button>
@@ -267,16 +319,20 @@ export default function WordRibbon({
 
         {/* DEVELOPER TAB */}
         {activeTab === "developer" && (
-          <div className="flex items-center gap-6 divide-x divide-zinc-800">
+          <div className={`flex items-center gap-6 divide-x ${isLight ? "divide-pink-100/50" : "divide-zinc-800"}`}>
             {/* Code syntax blocks */}
             <div className="flex flex-col gap-1 pr-4">
-              <span className="text-[10px] font-mono text-slate-500 uppercase font-semibold">Markdown Code Blocks</span>
+              <span className={`text-[10px] font-mono uppercase font-semibold ${isLight ? "text-stone-500" : "text-slate-500"}`}>Markdown Code Blocks</span>
               <div className="flex items-center gap-1.5">
                 {codeLanguages.map((lang) => (
                   <button
                     key={lang.val}
                     onClick={() => onInsertCodeBlock(lang.val)}
-                    className="px-2.5 py-1 bg-zinc-900 rounded border border-zinc-800 hover:bg-zinc-800 hover:text-orange-400 text-xs font-mono font-medium"
+                    className={`px-2.5 py-1 rounded border text-xs font-mono font-medium cursor-pointer ${
+                      isLight 
+                        ? "bg-white border-pink-100 text-stone-700 hover:bg-pink-100/15 hover:text-pink-600" 
+                        : "bg-zinc-900 border-zinc-800 text-slate-300 hover:bg-zinc-800 hover:text-orange-400"
+                    }`}
                   >
                     {lang.name}
                   </button>
@@ -286,13 +342,17 @@ export default function WordRibbon({
 
             {/* Templates block */}
             <div className="flex flex-col gap-1 px-4">
-              <span className="text-[10px] font-mono text-slate-500 uppercase font-semibold">Prose Layout Templates</span>
+              <span className={`text-[10px] font-mono uppercase font-semibold ${isLight ? "text-stone-500" : "text-slate-500"}`}>Prose Layout Templates</span>
               <div className="flex items-center gap-1.5">
                 {templates.map((temp) => (
                   <button
                     key={temp.val}
                     onClick={() => onInsertTemplate(temp.val)}
-                    className="px-2.5 py-1 bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 rounded text-xs"
+                    className={`px-2.5 py-1 border rounded text-xs cursor-pointer ${
+                      isLight 
+                        ? "bg-white border-pink-100 text-stone-700 hover:bg-pink-100/10" 
+                        : "bg-zinc-900 border-zinc-800 text-slate-300 hover:bg-zinc-800"
+                    }`}
                   >
                     {temp.name}
                   </button>
@@ -306,13 +366,15 @@ export default function WordRibbon({
         {activeTab === "stickers" && (
           <div className="flex items-center gap-4 w-full overflow-hidden">
             <div className="flex flex-col gap-1 shrink-0">
-              <span className="text-[10px] font-mono text-slate-500 uppercase font-semibold">Drop Interactive Badges</span>
-              <span className="text-[10px] text-orange-400/80 font-mono">Click to insert on canvas:</span>
+              <span className={`text-[10px] font-mono uppercase font-semibold ${isLight ? "text-stone-500" : "text-slate-500"}`}>Drop Interactive Badges</span>
+              <span className={`text-[10px] font-mono ${isLight ? "text-pink-600" : "text-orange-400/80"}`}>Click to insert on canvas:</span>
             </div>
             
             <div className="flex items-center gap-4 overflow-x-auto pb-1 max-w-full">
               {/* Combine stickers categories */}
-              <div className="flex items-center gap-2 bg-zinc-900/40 p-1.5 rounded-lg border border-zinc-800/80">
+              <div className={`flex items-center gap-2 p-1.5 rounded-lg border ${
+                isLight ? "bg-pink-50/50 border-pink-100" : "bg-zinc-900/40 border-zinc-800/80"
+              }`}>
                 {stickers.faces.map((s, idx) => (
                   <button
                     key={idx}
