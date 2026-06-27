@@ -1,7 +1,7 @@
 import React, { useState } from "react";
 import {
   Bold, Italic, Underline, Strikethrough, AlignLeft, AlignCenter, AlignRight, AlignJustify,
-  List, ListOrdered, Clipboard, Code, Quote, Sliders, Sparkles, Smile, Undo, Redo
+  List, ListOrdered, Clipboard, Code, Quote, Sliders, Sparkles, Smile, Undo, Redo, Save, RefreshCw
 } from "lucide-react";
 import { Personalization } from "../types";
 
@@ -14,6 +14,8 @@ interface WordRibbonProps {
   onInsertTemplate: (name: string) => void;
   onUndo?: () => void;
   onRedo?: () => void;
+  onSave?: () => void;
+  saveStatus?: string;
 }
 
 export default function WordRibbon({
@@ -25,6 +27,8 @@ export default function WordRibbon({
   onInsertTemplate,
   onUndo,
   onRedo,
+  onSave,
+  saveStatus,
 }: WordRibbonProps) {
   const [activeTab, setActiveTab] = useState<"home" | "insert" | "layout" | "developer" | "stickers">("home");
 
@@ -67,26 +71,59 @@ export default function WordRibbon({
         : "bg-black/15 border-b border-zinc-900/30 text-slate-100 backdrop-blur-md"
     }`}>
       {/* Ribbon Tab Bar */}
-      <div className={`flex px-4 pt-1 border-b text-xs transition-colors ${
+      <div className={`flex items-center justify-between px-4 pt-1 border-b text-xs transition-colors ${
         isLight ? "bg-white/5 border-pink-200/10" : "bg-black/5 border-zinc-900/10"
       }`}>
-        {(["home", "insert", "layout", "developer", "stickers"] as const).map((tab) => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`px-4 py-2.5 font-medium border-t-2 capitalize transition-all cursor-pointer ${
-              activeTab === tab
-                ? isLight
-                  ? "border-pink-500 text-pink-600 bg-white/40 font-semibold"
-                  : "border-orange-500 text-orange-400 bg-zinc-900/40 font-semibold"
+        <div className="flex">
+          {(["home", "insert", "layout", "developer", "stickers"] as const).map((tab) => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`px-4 py-2.5 font-medium border-t-2 capitalize transition-all cursor-pointer ${
+                activeTab === tab
+                  ? isLight
+                    ? "border-pink-500 text-pink-600 bg-white/40 font-semibold"
+                    : "border-orange-500 text-orange-400 bg-zinc-900/40 font-semibold"
+                  : isLight
+                    ? "border-transparent text-stone-500 hover:text-stone-800"
+                    : "border-transparent text-slate-500 hover:text-slate-300"
+              }`}
+            >
+              {tab === "layout" ? "Page Layout" : tab}
+            </button>
+          ))}
+        </div>
+
+        {/* Quick Save Action */}
+        <button
+          onClick={onSave}
+          className={`flex items-center gap-1.5 px-3 py-1.5 mr-2 rounded-md text-xs font-semibold shadow-sm cursor-pointer transition-all ${
+            saveStatus === "saving"
+              ? "bg-amber-500 text-black animate-pulse"
+              : saveStatus === "saved"
+                ? "bg-green-500 text-white"
                 : isLight
-                  ? "border-transparent text-stone-500 hover:text-stone-800"
-                  : "border-transparent text-slate-500 hover:text-slate-300"
-            }`}
-          >
-            {tab === "layout" ? "Page Layout" : tab}
-          </button>
-        ))}
+                  ? "bg-pink-600 hover:bg-pink-500 text-white"
+                  : "bg-orange-500 hover:bg-orange-400 text-black"
+          }`}
+        >
+          {saveStatus === "saving" ? (
+            <>
+              <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+              <span>Saving...</span>
+            </>
+          ) : saveStatus === "saved" ? (
+            <>
+              <span>✓</span>
+              <span>Saved!</span>
+            </>
+          ) : (
+            <>
+              <Save className="w-3.5 h-3.5" />
+              <span>Save Entry (Ctrl+S)</span>
+            </>
+          )}
+        </button>
       </div>
 
       {/* Ribbon Control Deck */}

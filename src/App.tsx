@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import CryptoJS from "crypto-js";
 import { motion, AnimatePresence } from "motion/react";
 import {
-  BookOpen, Image as ImageIcon, Search, ImagePlus, RefreshCw, Sparkles, Paintbrush, Undo, Redo, Users
+  BookOpen, Image as ImageIcon, Search, ImagePlus, RefreshCw, Sparkles, Paintbrush, Undo, Redo, Users, Save
 } from "lucide-react";
 
 import { Sticker, JournalFile, JournalFolder, JournalNode, Personalization } from "./types";
@@ -58,15 +58,34 @@ export default function App() {
 
   // Authentication states
   const [username, setUsername] = useState<string>("");
-  const [vFileSystem, setVFileSystem] = useState<JournalNode[]>([]);
+  const [vFileSystem, setVFileSystemState] = useState<JournalNode[]>([]);
+  const vFileSystemRef = useRef<JournalNode[]>(vFileSystem);
+
+  const setVFileSystem = (updated: JournalNode[] | ((prev: JournalNode[]) => JournalNode[])) => {
+    if (typeof updated === "function") {
+      const next = (updated as (prev: JournalNode[]) => JournalNode[])(vFileSystemRef.current);
+      vFileSystemRef.current = next;
+      setVFileSystemState(next);
+    } else {
+      vFileSystemRef.current = updated;
+      setVFileSystemState(updated);
+    }
+  };
+
   const [currentFileId, setCurrentFileId] = useState<string | null>(null);
-  const [clipboardNode, setClipboardNode] = useState<JournalNode | null>(null);
+  const clipboardNodeRef = useRef<JournalNode | null>(null);
+  const [clipboardNode, setClipboardNodeState] = useState<JournalNode | null>(null);
+  clipboardNodeRef.current = clipboardNode;
+  const setClipboardNode = (node: JournalNode | null) => {
+    clipboardNodeRef.current = node;
+    setClipboardNodeState(node);
+  };
 
   // Decrypted contents held safely in memory (ID -> plaintext text)
   const [decryptedMemStore, setDecryptedMemStore] = useState<Record<string, string>>({});
 
   // Theme settings and profile personalization
-  const [personalization, setPersonalization] = useState<Personalization>({
+  const [personalization, setPersonalizationState] = useState<Personalization>({
     theme: "slate-minimalist",
     outerWallpaper: "blossom",
     padStyle: "cherry-blossom-pad",
@@ -82,18 +101,33 @@ export default function App() {
     phoneAnchor: "",
     emailAnchor: ""
   });
+  const personalizationRef = useRef<Personalization>(personalization);
 
-  // Check for cached user session on mount
+  const setPersonalization = (updated: Personalization | ((prev: Personalization) => Personalization)) => {
+    if (typeof updated === "function") {
+      const next = (updated as (prev: Personalization) => Personalization)(personalizationRef.current);
+      personalizationRef.current = next;
+      setPersonalizationState(next);
+    } else {
+      personalizationRef.current = updated;
+      setPersonalizationState(updated);
+    }
+  };
+
+  // Check for cached user session on mount (plus active file and tab restoration)
   useEffect(() => {
     const cachedUser = localStorage.getItem("comic_diary_username");
     const cachedTree = localStorage.getItem("comic_diary_fs_tree");
     const cachedPersonalization = localStorage.getItem("comic_diary_personalization");
-
+    const cachedFileId = localStorage.getItem("comic_diary_current_file_id");
+    const cachedTab = localStorage.getItem("comic_diary_current_tab");
     if (cachedUser) {
       setUsername(cachedUser);
       if (cachedTree) {
         try {
-          setVFileSystem(JSON.parse(cachedTree));
+          const parsed = JSON.parse(cachedTree);
+          setVFileSystem(parsed);
+          lastSavedTreeJsonRef.current = cachedTree;
         } catch (e) {
           console.error("Failed to parse cached file tree", e);
         }
@@ -105,9 +139,23 @@ export default function App() {
           console.error("Failed to parse cached personalization", e);
         }
       }
+      if (cachedFileId) {
+        setCurrentFileId(cachedFileId);
+      }
+      if (cachedTab) {
+        setCurrentTab(cachedTab as any);
+      }
       setRoute("workspace");
     }
   }, []);
+
+  // Persist current active file ID & tab to localStorage across page refreshes (F5)
+  useEffect(() => {
+    if (currentFileId) {
+      localStorage.setItem("comic_diary_current_file_id", currentFileId);
+    }
+    localStorage.setItem("comic_diary_current_tab", currentTab);
+  }, [currentFileId, currentTab]);
 
   // Editor states
   const [showWhiteboard, setShowWhiteboard] = useState(false);
@@ -117,7 +165,53 @@ export default function App() {
   // Custom states for unified canvas, media review tracker, and search bar unsealing
   const [unsealedVaultIds, setUnsealedVaultIds] = useState<string[]>([]);
   const [isDrawingModeActive, setIsDrawingModeActive] = useState(false);
+  const personalizationDebounceRef = useRef<any>(null);
+  const saveStatusTimeoutRef = useRef<any>(null);
   const saveDebounceRef = useRef<any>(null);
+  const latestTree = useRef<JournalNode[]>([]);
+  const isInitialLoadRef = useRef<boolean>(true);
+  const lastSavedTreeJsonRef = useRef<string>("");
+
+  // History Undo/Redo States for Editor
+  const [saveStatus, setSaveStatus] = useState<"synced" | "saving" | "saved" | "idle">("synced");
+  const [undoStack, setUndoStackState] = useState<string[]>([]);
+  const [redoStack, setRedoStackState] = useState<string[]>([]);
+  const undoStackRef = useRef<string[]>([]);
+  const redoStackRef = useRef<string[]>([]);
+  const lastPushedHTMLRef = useRef<string>("");
+  const historyTimeoutRef = useRef<any>(null);
+
+  const setUndoStack = (val: string[] | ((prev: string[]) => string[])) => {
+    setUndoStackState((prev) => {
+      const next = typeof val === "function" ? val(prev) : val;
+      undoStackRef.current = next;
+      return next;
+    });
+  };
+
+  const setRedoStack = (val: string[] | ((prev: string[]) => string[])) => {
+    setRedoStackState((prev) => {
+      const next = typeof val === "function" ? val(prev) : val;
+      redoStackRef.current = next;
+      return next;
+    });
+  };
+
+  // Push to history when text changes
+  const pushToUndoStack = (html: string) => {
+    if (html === lastPushedHTMLRef.current) return;
+    if (historyTimeoutRef.current) clearTimeout(historyTimeoutRef.current);
+    historyTimeoutRef.current = setTimeout(() => {
+      setUndoStack((prev) => {
+        if (prev.length > 0 && prev[prev.length - 1] === html) return prev;
+        const next = [...prev, html];
+        if (next.length > 50) next.shift();
+        return next;
+      });
+      setRedoStack([]);
+      lastPushedHTMLRef.current = html;
+    }, 400);
+  };
 
   // Selected folder for dashboard quick-view
   const [dashboardSearchQuery, setDashboardSearchQuery] = useState("");
@@ -128,15 +222,20 @@ export default function App() {
 
   const currentFile = currentFileId ? (findNodeRecursive(vFileSystem, currentFileId) as JournalFile) : null;
 
-  // Synchronize editor innerHTML safely when selected file changes or unlocks.
-  // We avoid resetting innerHTML while the user is typing so cursor caret selection is preserved.
+  // Helper to safely retrieve current file content
+  const getActiveFileContent = (file: JournalFile): string => {
+    if (file.isLocked) {
+      return decryptedMemStore[file.id] || "<i>[Content Blocked - Enter Passkey]</i>";
+    }
+    return file.content || "";
+  };
+
+  // Synchronize editor innerHTML safely when selected file changes, unlocks, OR when tab switches back to editor
   useEffect(() => {
-    if (editorRef.current && currentFile) {
+    if (currentTab === "editor" && editorRef.current && currentFile) {
       const isLocked = currentFile.isLocked && !decryptedMemStore[currentFile.id];
-      const trackerKey = `${currentFile.id}_${isLocked ? "locked" : "unlocked"}`;
-      
+      const trackerKey = `${currentFile.id}_${isLocked ? "locked" : "unlocked"}_${currentTab}`;
       if (lastLoadedFileIdRef.current !== trackerKey) {
-        // LAYER 3 REHYDRATION SHIELD: render cached content immediately
         const cachedHTML = localStorage.getItem(`rehydrate_file_${currentFile.id}`);
         if (cachedHTML && !isLocked) {
           editorRef.current.innerHTML = cachedHTML;
@@ -145,29 +244,214 @@ export default function App() {
         }
         lastLoadedFileIdRef.current = trackerKey;
       }
-    } else {
+    } else if (currentTab !== "editor") {
       lastLoadedFileIdRef.current = null;
     }
-  }, [currentFileId, decryptedMemStore, currentFile]);
+  }, [currentFileId, decryptedMemStore, currentFile, currentTab]);
+
+  // Force-save current editor state when browser tab is reloaded (F5) or closed
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (currentTab === "editor" && editorRef.current && currentFileId) {
+        const rawHTML = editorRef.current.innerHTML;
+        if (rawHTML && !rawHTML.includes("[Content Blocked - Enter Passkey]")) {
+          localStorage.setItem(`rehydrate_file_${currentFileId}`, rawHTML);
+        }
+      }
+    };
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
+  }, [currentFileId, currentTab]);
+
+  // Set initial undo history when file is loaded
+  useEffect(() => {
+    if (currentFile) {
+      const html = getActiveFileContent(currentFile);
+      setUndoStack([html]);
+      setRedoStack([]);
+      lastPushedHTMLRef.current = html;
+    } else {
+      setUndoStack([]);
+      setRedoStack([]);
+      lastPushedHTMLRef.current = "";
+    }
+  }, [currentFileId]);
+
+  // Global key listener for undo/redo & save shortcuts
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === "z") {
+        if (currentTab === "editor") {
+          e.preventDefault();
+          handleUndo();
+        }
+      } else if (
+        ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") ||
+        ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "z")
+      ) {
+        if (currentTab === "editor") {
+          e.preventDefault();
+          handleRedo();
+        }
+      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+        if (currentTab === "editor") {
+          e.preventDefault();
+          handleManualSave();
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [currentTab, currentFileId]);
 
   // Sync state changes with the server and cache in localStorage
-  const syncWithServer = async (updatedFS: JournalNode[], updatedAvatar?: string) => {
-    if (!username) return;
+  const syncWithServer = async (
+    updatedFS: JournalNode[], 
+    updatedAvatar?: string,
+    updatedFather?: string,
+    updatedMother?: string,
+    updatedOthers?: string
+  ): Promise<boolean> => {
+    if (!username) return false;
+    setSaveStatus("saving");
     localStorage.setItem("comic_diary_fs_tree", JSON.stringify(updatedFS));
     try {
-      await fetch(`${API_BASE_URL}/api/save`, {
+      const response = await fetch(`${API_BASE_URL}/api/save`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           username,
           fs_tree: updatedFS,
-          avatar_desc: updatedAvatar !== undefined ? updatedAvatar : personalization.avatarDesc
+          avatar_desc: updatedAvatar !== undefined ? updatedAvatar : personalizationRef.current.avatarDesc,
+          father_desc: updatedFather !== undefined ? updatedFather : (personalizationRef.current.fatherDesc || ""),
+          mother_desc: updatedMother !== undefined ? updatedMother : (personalizationRef.current.motherDesc || ""),
+          others_desc: updatedOthers !== undefined ? updatedOthers : (personalizationRef.current.othersDesc || "")
         })
       });
+      if (response.ok) {
+        lastSavedTreeJsonRef.current = JSON.stringify(updatedFS);
+        if (currentFileId) {
+          localStorage.removeItem(`rehydrate_file_${currentFileId}`);
+        }
+        setSaveStatus("saved");
+        if (saveStatusTimeoutRef.current) {
+          clearTimeout(saveStatusTimeoutRef.current);
+        }
+        saveStatusTimeoutRef.current = setTimeout(() => {
+          setSaveStatus((current) => current === "saved" ? "synced" : current);
+        }, 3000);
+        return true;
+      } else {
+        setSaveStatus("idle");
+        return false;
+      }
     } catch (e) {
       console.error("Permanence synchronization failed:", e);
+      setSaveStatus("idle");
+      return false;
     }
   };
+
+  const setVFileSystemAndSync = async (
+    updated: JournalNode[] | ((prev: JournalNode[]) => JournalNode[])
+  ) => {
+    let next: JournalNode[];
+    if (typeof updated === "function") {
+      next = (updated as (prev: JournalNode[]) => JournalNode[])(vFileSystemRef.current);
+    } else {
+      next = updated;
+    }
+    setVFileSystem(next);
+    if (username) {
+      await syncWithServer(next);
+    }
+  };
+
+  // Keep latestTree ref updated
+  useEffect(() => {
+    latestTree.current = vFileSystem;
+  }, [vFileSystem]);
+
+  // Reset initial load skip on user switch
+  useEffect(() => {
+    isInitialLoadRef.current = true;
+  }, [username]);
+
+  // Synchronously compute the complete virtual file system tree with latest editor content
+  const getFlushedTree = (): JournalNode[] => {
+    if (!currentFileId || !editorRef.current) return vFileSystemRef.current;
+    const html = editorRef.current.innerHTML;
+    const updated = cloneFileSystem(vFileSystemRef.current);
+    const file = findNodeRecursive(updated, currentFileId) as JournalFile;
+    if (file) {
+      if (file.isLocked) {
+        setDecryptedMemStore(mem => ({ ...mem, [file.id]: html }));
+        const key = file.password || "temp-vault-key";
+        file.content = CryptoJS.AES.encrypt(html, key).toString();
+      } else {
+        file.content = html;
+      }
+      file.edited = new Date().toLocaleString();
+    }
+    return updated;
+  };
+
+  // Autosave effect on vFileSystem state change
+  useEffect(() => {
+    if (!username) return;
+    if (isInitialLoadRef.current) {
+      isInitialLoadRef.current = false;
+      return;
+    }
+
+    // Skip autosave if the current file system is identical to what is already saved on the server
+    const currentFSJson = JSON.stringify(vFileSystemRef.current);
+    if (currentFSJson === lastSavedTreeJsonRef.current) {
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      setSaveStatus("saving");
+      const success = await syncWithServer(vFileSystemRef.current);
+      if (success) {
+        setSaveStatus("synced");
+      } else {
+        setSaveStatus("idle");
+      }
+    }, 800);
+
+    return () => clearTimeout(timer);
+  }, [vFileSystem, username]);
+
+  // Save synchronously before unload/refresh to completely prevent keystroke data loss
+  useEffect(() => {
+    const handler = () => {
+      let flushed = vFileSystemRef.current;
+      if (editorRef.current && currentFileId) {
+        const html = editorRef.current.innerHTML;
+        localStorage.setItem(`rehydrate_file_${currentFileId}`, html);
+        flushed = getFlushedTree();
+        localStorage.setItem("comic_diary_fs_tree", JSON.stringify(flushed));
+      }
+
+      if (username) {
+        const body = JSON.stringify({
+          username,
+          fs_tree: flushed,
+          avatar_desc: personalizationRef.current.avatarDesc,
+          father_desc: personalizationRef.current.fatherDesc || "",
+          mother_desc: personalizationRef.current.motherDesc || "",
+          others_desc: personalizationRef.current.othersDesc || ""
+        });
+        navigator.sendBeacon(`${API_BASE_URL}/api/save`, new Blob([body], { type: "application/json" }));
+      }
+    };
+
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [currentFileId, username]);
 
   // Canvas overlay drawing states & refs
   const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -219,13 +503,13 @@ export default function App() {
     setDrawUndoStack((prev) => [...prev, currentFile?.canvasPaths || ""]);
     setDrawRedoStack([]); // clear redo on new drawings
 
+    setSaveStatus("saving");
     setVFileSystem((prev) => {
       const updated = cloneFileSystem(prev);
       const file = findNodeRecursive(updated, currentFileId) as JournalFile;
       if (file) {
         file.canvasPaths = dataUrl;
       }
-      syncWithServer(updated);
       return updated;
     });
   };
@@ -250,13 +534,13 @@ export default function App() {
       img.src = previousState;
     }
 
+    setSaveStatus("saving");
     setVFileSystem((prev) => {
       const updated = cloneFileSystem(prev);
       const file = findNodeRecursive(updated, currentFileId) as JournalFile;
       if (file) {
         file.canvasPaths = previousState;
       }
-      syncWithServer(updated);
       return updated;
     });
   };
@@ -281,13 +565,13 @@ export default function App() {
       img.src = nextState;
     }
 
+    setSaveStatus("saving");
     setVFileSystem((prev) => {
       const updated = cloneFileSystem(prev);
       const file = findNodeRecursive(updated, currentFileId) as JournalFile;
       if (file) {
         file.canvasPaths = nextState;
       }
-      syncWithServer(updated);
       return updated;
     });
   };
@@ -400,13 +684,13 @@ export default function App() {
     setDrawUndoStack((prev) => [...prev, currentFile?.canvasPaths || ""]);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
+    setSaveStatus("saving");
     setVFileSystem((prev) => {
       const updated = cloneFileSystem(prev);
       const file = findNodeRecursive(updated, currentFileId) as JournalFile;
       if (file) {
         file.canvasPaths = "";
       }
-      syncWithServer(updated);
       return updated;
     });
   };
@@ -414,26 +698,26 @@ export default function App() {
   // Media review helpers
   const handleUpdateStarRating = (star: number) => {
     if (!currentFileId) return;
+    setSaveStatus("saving");
     setVFileSystem((prev) => {
       const updated = cloneFileSystem(prev);
       const file = findNodeRecursive(updated, currentFileId) as JournalFile;
       if (file) {
         file.starRating = star;
       }
-      syncWithServer(updated);
       return updated;
     });
   };
 
   const handleUpdateOneLiner = (summary: string) => {
     if (!currentFileId) return;
+    setSaveStatus("saving");
     setVFileSystem((prev) => {
       const updated = cloneFileSystem(prev);
       const file = findNodeRecursive(updated, currentFileId) as JournalFile;
       if (file) {
         file.oneLiner = summary;
       }
-      syncWithServer(updated);
       return updated;
     });
   };
@@ -441,6 +725,7 @@ export default function App() {
   // Character alignment helpers
   const handleAddCharacter = () => {
     if (!currentFileId) return;
+    setSaveStatus("saving");
     setVFileSystem((prev) => {
       const updated = cloneFileSystem(prev);
       const file = findNodeRecursive(updated, currentFileId) as JournalFile;
@@ -453,20 +738,19 @@ export default function App() {
           desc: "Key role profile and alignment notes..."
         });
       }
-      syncWithServer(updated);
       return updated;
     });
   };
 
   const handleRemoveCharacter = (charId: string) => {
     if (!currentFileId) return;
+    setSaveStatus("saving");
     setVFileSystem((prev) => {
       const updated = cloneFileSystem(prev);
       const file = findNodeRecursive(updated, currentFileId) as JournalFile;
       if (file) {
         file.characters = (file.characters || []).filter((c) => c.id !== charId);
       }
-      syncWithServer(updated);
       return updated;
     });
   };
@@ -484,7 +768,8 @@ export default function App() {
           return c;
         });
       }
-      syncWithServer(updated);
+      
+      setSaveStatus("saving");
       return updated;
     });
   };
@@ -507,22 +792,47 @@ export default function App() {
     }
   };
 
+  // Clear all rehydrate_file_ cache items to avoid loading stale local caches from previous users/sessions
+  const clearRehydrateCache = () => {
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith("rehydrate_file_")) {
+        keysToRemove.push(key);
+      }
+    }
+    keysToRemove.forEach((key) => localStorage.removeItem(key));
+  };
+
   // Login handler
-  const handleLoginSuccess = (data: { username: string; fs_tree: any[]; avatar_desc: string }) => {
+  const handleLoginSuccess = (data: { 
+    username: string; 
+    fs_tree: any[]; 
+    avatar_desc: string; 
+    father_desc?: string; 
+    mother_desc?: string; 
+    others_desc?: string; 
+  }) => {
+    clearRehydrateCache();
     setUsername(data.username);
     setVFileSystem(data.fs_tree || []);
+    lastSavedTreeJsonRef.current = JSON.stringify(data.fs_tree || []);
     localStorage.setItem("comic_diary_username", data.username);
     localStorage.setItem("comic_diary_fs_tree", JSON.stringify(data.fs_tree || []));
 
-    if (data.avatar_desc) {
-      setPersonalization(prev => {
-        const next = { ...prev, avatarDesc: data.avatar_desc };
-        localStorage.setItem("comic_diary_personalization", JSON.stringify(next));
-        return next;
-      });
-    }
+    setPersonalization(prev => {
+      const next = { 
+        ...prev, 
+        avatarDesc: data.avatar_desc || prev.avatarDesc,
+        fatherDesc: data.father_desc !== undefined ? data.father_desc : prev.fatherDesc,
+        motherDesc: data.mother_desc !== undefined ? data.mother_desc : prev.motherDesc,
+        othersDesc: data.others_desc !== undefined ? data.others_desc : prev.othersDesc
+      };
+      localStorage.setItem("comic_diary_personalization", JSON.stringify(next));
+      return next;
+    });
     setRoute("workspace");
-    setCurrentTab("dashboard");
+    changeTab("dashboard");
   };
 
   // Update Personalization
@@ -530,16 +840,38 @@ export default function App() {
     setPersonalization((prev) => {
       const next = { ...prev, ...updates };
       localStorage.setItem("comic_diary_personalization", JSON.stringify(next));
-      if (updates.avatarDesc !== undefined) {
-        syncWithServer(vFileSystem, updates.avatarDesc);
+      
+      // Debounce the server synchronization so it works smoothly on typing
+      if (personalizationDebounceRef.current) {
+        clearTimeout(personalizationDebounceRef.current);
       }
+      setSaveStatus("saving");
+      personalizationDebounceRef.current = setTimeout(() => {
+        syncWithServer(
+          vFileSystem, 
+          next.avatarDesc, 
+          next.fatherDesc || "", 
+          next.motherDesc || "", 
+          next.othersDesc || ""
+        ).then((success) => {
+          if (success) {
+            setSaveStatus("saved");
+            setTimeout(() => {
+              setSaveStatus((current) => current === "saved" ? "synced" : current);
+            }, 3000);
+          }
+        });
+      }, 1000);
+
       return next;
     });
   };
 
   const handleLogout = () => {
+    clearRehydrateCache();
     setUsername("");
     setVFileSystem([]);
+    lastSavedTreeJsonRef.current = "";
     setDecryptedMemStore({});
     localStorage.removeItem("comic_diary_username");
     localStorage.removeItem("comic_diary_fs_tree");
@@ -559,29 +891,27 @@ export default function App() {
     if (!currentFileId) return;
     const editor = editorRef.current;
     if (!editor) return;
-
     const rawHTML = editor.innerHTML;
-
+    // Guard: Prevent overwriting actual file content with the locked block text
+    if (rawHTML.includes("[Content Blocked - Enter Passkey]")) return;
+    pushToUndoStack(rawHTML);
+    setSaveStatus("saving");
     setVFileSystem((prev) => {
       const updated = cloneFileSystem(prev);
       const file = findNodeRecursive(updated, currentFileId) as JournalFile;
       if (file) {
         if (file.isLocked) {
-          // Keep unencrypted plaintext in memory store only
           setDecryptedMemStore(mem => ({ ...mem, [file.id]: rawHTML }));
-          // Encrypt before permanent state storage using custom CryptoJS
           const key = file.password || "temp-vault-key";
           file.content = CryptoJS.AES.encrypt(rawHTML, key).toString();
         } else {
           file.content = rawHTML;
         }
         file.edited = new Date().toLocaleString();
-
-        // Dual-Save instant local cache for vanish-text prevention (Layer 1)
+        // Layer 1: Instant local storage cache (synchronous)
         localStorage.setItem(`rehydrate_file_${file.id}`, rawHTML);
         localStorage.setItem("comic_diary_fs_tree", JSON.stringify(updated));
-
-        // Debounced background sync (Layer 2)
+        // Layer 2: Debounced background server sync
         if (saveDebounceRef.current) {
           clearTimeout(saveDebounceRef.current);
         }
@@ -593,19 +923,113 @@ export default function App() {
     });
   };
 
-  // Double check and retrieve decrypted contents in browser memory safely
-  const getActiveFileContent = (file: JournalFile): string => {
-    if (file.isLocked) {
-      return decryptedMemStore[file.id] || "<i>[Content Blocked - Enter Passkey]</i>";
+  const flushEditor = (): JournalNode[] => {
+    if (!editorRef.current || !currentFileId) return vFileSystemRef.current;
+    
+    // Safety check: if the editor has not actually loaded the active file yet (meaning DOM shows stale content),
+    // we must skip flushing to prevent overwriting the new file with old content.
+    if (currentFileId !== lastLoadedFileIdRef.current) {
+      return vFileSystemRef.current;
     }
-    return file.content || "";
+
+    const html = editorRef.current.innerHTML;
+    localStorage.setItem(`rehydrate_file_${currentFileId}`, html);
+    const updated = getFlushedTree();
+    setVFileSystem(updated);
+    return updated;
   };
+
+  const changeTab = async (tab: "dashboard" | "editor" | "comic-book" | "insights" | "communications" | "media-ledger") => {
+    const tree = flushEditor();
+    if (username) {
+      await syncWithServer(tree);
+    }
+    setCurrentTab(tab);
+  };
+
+  const handleManualSave = async () => {
+    const flushedTree = flushEditor();
+    setSaveStatus("saving");
+    const success = await syncWithServer(flushedTree);
+    if (success) {
+      setSaveStatus("saved");
+      if (saveStatusTimeoutRef.current) {
+        clearTimeout(saveStatusTimeoutRef.current);
+      }
+      saveStatusTimeoutRef.current = setTimeout(() => {
+        setSaveStatus((current) => current === "saved" ? "synced" : current);
+      }, 2000);
+    } else {
+      setSaveStatus("idle");
+    }
+  };
+
+  const handleEditorInputDirectly = (html: string) => {
+    if (!currentFileId) return;
+    const updated = cloneFileSystem(vFileSystemRef.current);
+    const file = findNodeRecursive(updated, currentFileId) as JournalFile;
+    if (file) {
+      if (file.isLocked) {
+        setDecryptedMemStore(mem => ({ ...mem, [file.id]: html }));
+        const key = file.password || "temp-vault-key";
+        file.content = CryptoJS.AES.encrypt(html, key).toString();
+      } else {
+        file.content = html;
+      }
+      file.edited = new Date().toLocaleString();
+
+      localStorage.setItem(`rehydrate_file_${file.id}`, html);
+      localStorage.setItem("comic_diary_fs_tree", JSON.stringify(updated));
+      
+      setVFileSystem(updated);
+    }
+  };
+
+  const handleUndo = () => {
+    const stack = undoStackRef.current;
+    if (stack.length <= 1) return;
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    const currentHTML = editor.innerHTML;
+    const previousHTML = stack[stack.length - 2];
+
+    setUndoStack(prev => prev.slice(0, -1));
+    setRedoStack(prev => [...prev, currentHTML]);
+
+    editor.innerHTML = previousHTML;
+    lastPushedHTMLRef.current = previousHTML;
+    handleEditorInputDirectly(previousHTML);
+  };
+
+  const handleRedo = () => {
+    const stack = redoStackRef.current;
+    if (stack.length === 0) return;
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    const nextHTML = stack[stack.length - 1];
+
+    setRedoStack(prev => prev.slice(0, -1));
+    setUndoStack(prev => [...prev, nextHTML]);
+
+    editor.innerHTML = nextHTML;
+    lastPushedHTMLRef.current = nextHTML;
+    handleEditorInputDirectly(nextHTML);
+  };
+
+
 
   // Helpers migrated to top-level module scope to avoid hoisting errors
 
   // Select node to write / edit
-  const handleSelectFile = (id: string) => {
-    const node = findNodeRecursive(vFileSystem, id) as JournalFile;
+  const handleSelectFile = async (id: string) => {
+    const tree = flushEditor();
+    if (username) {
+      await syncWithServer(tree);
+    }
+    const latestTreeValue = vFileSystemRef.current;
+    const node = findNodeRecursive(latestTreeValue, id) as JournalFile;
     if (node) {
       if (node.isLocked && !decryptedMemStore[node.id]) {
         const pass = prompt("Enter decryption passkey to unseal file:");
@@ -620,20 +1044,22 @@ export default function App() {
             node.isLocked = true; 
             node.password = pass; // Store temporary key
             setCurrentFileId(id);
-            setCurrentTab("editor");
+            await changeTab("editor");
           } catch (e) {
             alert("Security Decryption Failed. Block remains encrypted.");
           }
         }
       } else {
         setCurrentFileId(id);
-        setCurrentTab("editor");
+        await changeTab("editor");
       }
     }
   };
 
   // Create Root or nested Folder
   const handleAddFolder = (parentId?: string) => {
+    flushEditor();
+    const latestTreeValue = vFileSystemRef.current;
     const name = prompt("Name Folder:") || "New Folder 📁";
     const newFolder: JournalFolder = {
       id: "fold_" + Date.now(),
@@ -642,8 +1068,9 @@ export default function App() {
       children: [],
     };
 
-    setVFileSystem((prev) => {
-      const next = cloneFileSystem(prev);
+    setSaveStatus("saving");
+    setVFileSystemAndSync(() => {
+      const next = cloneFileSystem(latestTreeValue);
       if (parentId) {
         const parent = findNodeRecursive(next, parentId) as JournalFolder;
         if (parent) {
@@ -652,13 +1079,14 @@ export default function App() {
       } else {
         next.push(newFolder);
       }
-      syncWithServer(next);
       return next;
     });
   };
 
   // Create file
   const handleAddFile = (parentId: string) => {
+    flushEditor();
+    const latestTreeValue = vFileSystemRef.current;
     const name = prompt("Name File:") || "Diary Log 📄";
     const newFile: JournalFile = {
       id: "file_" + Date.now(),
@@ -672,29 +1100,31 @@ export default function App() {
       stickers: [],
     };
 
-    setVFileSystem((prev) => {
-      const next = cloneFileSystem(prev);
+    setSaveStatus("saving");
+    setVFileSystemAndSync(() => {
+      const next = cloneFileSystem(latestTreeValue);
       const parent = findNodeRecursive(next, parentId) as JournalFolder;
       if (parent) {
         parent.children.push(newFile);
       }
-      syncWithServer(next);
       return next;
     });
 
     setCurrentFileId(newFile.id);
-    setCurrentTab("editor");
+    changeTab("editor");
   };
 
   // Rename node
   const handleRenameNode = (id: string, name: string) => {
-    setVFileSystem((prev) => {
-      const next = cloneFileSystem(prev);
+    flushEditor();
+    const latestTreeValue = vFileSystemRef.current;
+    setSaveStatus("saving");
+    setVFileSystemAndSync(() => {
+      const next = cloneFileSystem(latestTreeValue);
       const target = findNodeRecursive(next, id);
       if (target) {
         target.name = name;
       }
-      syncWithServer(next);
       return next;
     });
   };
@@ -705,13 +1135,15 @@ export default function App() {
   };
 
   const executeDeleteNode = (id: string) => {
-    setVFileSystem((prev) => {
-      const next = cloneFileSystem(prev);
+    flushEditor();
+    const latestTreeValue = vFileSystemRef.current;
+    setSaveStatus("saving");
+    setVFileSystemAndSync(() => {
+      const next = cloneFileSystem(latestTreeValue);
       removeNodeRecursive(next, id);
       if (currentFileId === id) {
         setCurrentFileId(null);
       }
-      syncWithServer(next);
       return next;
     });
     setDeletePendingId(null);
@@ -719,7 +1151,7 @@ export default function App() {
 
   // Move node (Cut)
   const handleCutNode = (id: string) => {
-    setVFileSystem((prev) => {
+    setVFileSystemAndSync((prev) => {
       const next = cloneFileSystem(prev);
       const cut = removeNodeRecursive(next, id);
       if (cut) {
@@ -732,21 +1164,21 @@ export default function App() {
   // Paste node
   const handlePasteNode = (parentId: string) => {
     if (!clipboardNode) return;
-    setVFileSystem((prev) => {
+    setSaveStatus("saving");
+    setVFileSystemAndSync((prev) => {
       const next = cloneFileSystem(prev);
       const parent = findNodeRecursive(next, parentId) as JournalFolder;
       if (parent && parent.children) {
         parent.children.push(clipboardNode);
         setClipboardNode(null);
       }
-      syncWithServer(next);
       return next;
     });
   };
 
   // AES Password protection for folders
   const handleLockNode = (id: string, password?: string, type?: "folder" | "file") => {
-    setVFileSystem((prev) => {
+    setVFileSystemAndSync((prev) => {
       const next = cloneFileSystem(prev);
       const target = findNodeRecursive(next, id);
       if (target) {
@@ -760,13 +1192,48 @@ export default function App() {
           setDecryptedMemStore(mem => ({ ...mem, [file.id]: plainText }));
         }
       }
-      syncWithServer(next);
+      return next;
+    });
+  };
+
+  const handleUpdateVaultPassword = (newPassword: string) => {
+    handleUpdatePersonalization({ vaultPassword: newPassword });
+    setSaveStatus("saving");
+    setVFileSystemAndSync((prev) => {
+      const next = cloneFileSystem(prev);
+      const updatePasswordsRecursive = (nodes: JournalNode[]) => {
+        nodes.forEach((n) => {
+          if (n.isLocked) {
+            const oldPass = n.password || personalization.vaultPassword || "1234";
+            n.password = newPassword;
+            if (n.type === "file") {
+              const file = n as JournalFile;
+              try {
+                const bytes = CryptoJS.AES.decrypt(file.content, oldPass);
+                const decrypted = bytes.toString(CryptoJS.enc.Utf8);
+                if (decrypted) {
+                  file.content = CryptoJS.AES.encrypt(decrypted, newPassword).toString();
+                }
+              } catch (e) {
+                try {
+                  file.content = CryptoJS.AES.encrypt(file.content, newPassword).toString();
+                } catch (e2) {}
+              }
+            }
+          }
+          if (n.type === "folder" && (n as JournalFolder).children) {
+            updatePasswordsRecursive((n as JournalFolder).children);
+          }
+        });
+      };
+      updatePasswordsRecursive(next);
       return next;
     });
   };
 
   const handleUnlockNode = (id: string, password?: string, type?: "folder" | "file") => {
-    setVFileSystem((prev) => {
+    setSaveStatus("saving");
+    setVFileSystemAndSync((prev) => {
       const next = cloneFileSystem(prev);
       const target = findNodeRecursive(next, id);
       if (target) {
@@ -795,7 +1262,6 @@ export default function App() {
           }
         }
       }
-      syncWithServer(next);
       return next;
     });
   };
@@ -810,14 +1276,14 @@ export default function App() {
       transform: "scale(1.0)",
     };
 
-    setVFileSystem((prev) => {
+    setSaveStatus("saving");
+    setVFileSystemAndSync((prev) => {
       const next = cloneFileSystem(prev);
       const file = findNodeRecursive(next, currentFileId) as JournalFile;
       if (file) {
         if (!file.stickers) file.stickers = [];
         file.stickers.push(newSticker);
       }
-      syncWithServer(next);
       return next;
     });
   };
@@ -825,21 +1291,22 @@ export default function App() {
   // Modify individual stickers (drag, delete, resize)
   const handleMoveSticker = (stickerIndex: number, top: string, left: string) => {
     if (!currentFileId) return;
-    setVFileSystem((prev) => {
+    setSaveStatus("saving");
+    setVFileSystemAndSync((prev) => {
       const next = cloneFileSystem(prev);
       const file = findNodeRecursive(next, currentFileId) as JournalFile;
       if (file && file.stickers) {
         file.stickers[stickerIndex].top = top;
         file.stickers[stickerIndex].left = left;
       }
-      syncWithServer(next);
       return next;
     });
   };
 
   const handleScaleSticker = (stickerIndex: number) => {
     if (!currentFileId) return;
-    setVFileSystem((prev) => {
+    setSaveStatus("saving");
+    setVFileSystemAndSync((prev) => {
       const next = cloneFileSystem(prev);
       const file = findNodeRecursive(next, currentFileId) as JournalFile;
       if (file && file.stickers) {
@@ -847,20 +1314,19 @@ export default function App() {
         const nextScale = currentScale >= 2.5 ? 0.8 : currentScale + 0.3;
         file.stickers[stickerIndex].transform = `scale(${nextScale})`;
       }
-      syncWithServer(next);
       return next;
     });
   };
 
   const handleDeleteSticker = (stickerIndex: number) => {
     if (!currentFileId) return;
-    setVFileSystem((prev) => {
+    setSaveStatus("saving");
+    setVFileSystemAndSync((prev) => {
       const next = cloneFileSystem(prev);
       const file = findNodeRecursive(next, currentFileId) as JournalFile;
       if (file && file.stickers) {
         file.stickers.splice(stickerIndex, 1);
       }
-      syncWithServer(next);
       return next;
     });
   };
@@ -892,13 +1358,13 @@ export default function App() {
     const reader = new FileReader();
     reader.onload = () => {
       if (currentFileId) {
-        setVFileSystem((prev) => {
+        setSaveStatus("saving");
+        setVFileSystemAndSync((prev) => {
           const next = cloneFileSystem(prev);
           const target = findNodeRecursive(next, currentFileId) as JournalFile;
           if (target) {
             target.attached_image = reader.result as string;
           }
-          syncWithServer(next);
           return next;
         });
       }
@@ -908,13 +1374,13 @@ export default function App() {
 
   const handleRemoveAttachment = () => {
     if (currentFileId) {
-      setVFileSystem((prev) => {
+      setSaveStatus("saving");
+      setVFileSystemAndSync((prev) => {
         const next = cloneFileSystem(prev);
         const target = findNodeRecursive(next, currentFileId) as JournalFile;
         if (target) {
           delete target.attached_image;
         }
-        syncWithServer(next);
         return next;
       });
     }
@@ -932,10 +1398,14 @@ export default function App() {
     setGeneratingComic(true);
 
     try {
+      const fileChars = (file.characters || []).map(c => `${c.name} (${c.role}): ${c.desc}`).join(", ");
+      const universeCharsGuideline = fileChars ? ` Active scene characters: ${fileChars}.` : "";
+
       const charGuidelines = `Main character profile: ${personalization.avatarDesc || "classic character"}. ` +
         (personalization.fatherDesc ? `Father character: ${personalization.fatherDesc}. ` : "") +
         (personalization.motherDesc ? `Mother character: ${personalization.motherDesc}. ` : "") +
-        (personalization.othersDesc ? `Other character alignments: ${personalization.othersDesc}. ` : "");
+        (personalization.othersDesc ? `Other character alignments: ${personalization.othersDesc}. ` : "") +
+        universeCharsGuideline;
 
       const customPrompt = `Indie comic book panel cell, high contrast linework style, vibrant graphic colors. Scene details based on diary: "${textToAnalyze}". Character references guidelines: ${charGuidelines}. Ambient atmosphere style.`;
 
@@ -957,13 +1427,13 @@ export default function App() {
 
       const data = await response.json();
       if (data.image_data_url) {
-        setVFileSystem((prev) => {
+        setSaveStatus("saving");
+        setVFileSystemAndSync((prev) => {
           const next = cloneFileSystem(prev);
           const target = findNodeRecursive(next, currentFileId) as JournalFile;
           if (target) {
             target.comic = data.image_data_url;
           }
-          syncWithServer(next);
           return next;
         });
       }
@@ -977,13 +1447,13 @@ export default function App() {
   // Update active file mood
   const handleUpdateMood = (mood: string) => {
     if (!currentFileId) return;
-    setVFileSystem((prev) => {
+    setSaveStatus("saving");
+    setVFileSystemAndSync((prev) => {
       const next = cloneFileSystem(prev);
       const target = findNodeRecursive(next, currentFileId) as JournalFile;
       if (target) {
         target.mood = mood;
       }
-      syncWithServer(next);
       return next;
     });
   };
@@ -991,13 +1461,13 @@ export default function App() {
   // Update active file weather
   const handleUpdateWeather = (weather: string) => {
     if (!currentFileId) return;
-    setVFileSystem((prev) => {
+    setSaveStatus("saving");
+    setVFileSystemAndSync((prev) => {
       const next = cloneFileSystem(prev);
       const target = findNodeRecursive(next, currentFileId) as JournalFile;
       if (target) {
         target.weather = weather;
       }
-      syncWithServer(next);
       return next;
     });
   };
@@ -1054,7 +1524,7 @@ export default function App() {
   // Export full compiled PDF Book
   const handleExportPDF = (folderId: string) => {
     // Add logic or simply delegate to the Studio Tab view!
-    setCurrentTab("comic-book");
+    changeTab("comic-book");
     alert("Sequential Comic Book compiler is unsealed below. Compile your logs here!");
   };
 
@@ -1132,12 +1602,15 @@ export default function App() {
               onLockNode={handleLockNode}
               onUnlockNode={handleUnlockNode}
               onUpdatePersonalization={handleUpdatePersonalization}
+              onUpdateVaultPassword={handleUpdateVaultPassword}
               onExportFolderBook={handleExportPDF}
               onLogout={handleLogout}
               collapsed={sidebarCollapsed}
               onToggleCollapsed={() => setSidebarCollapsed(!sidebarCollapsed)}
               username={username}
               unsealedVaultIds={unsealedVaultIds}
+              dashboardSearchQuery={dashboardSearchQuery}
+              saveStatus={saveStatus}
             />
 
             {/* Main Application deck */}
@@ -1155,7 +1628,7 @@ export default function App() {
                   {(["dashboard", "editor", "comic-book", "insights", "communications", "media-ledger"] as const).map((tab) => (
                     <button
                       key={tab}
-                      onClick={() => setCurrentTab(tab)}
+                      onClick={() => changeTab(tab)}
                       className={`px-4 py-2 text-xs font-semibold rounded-lg capitalize transition-all cursor-pointer ${
                         currentTab === tab
                           ? "bg-pink-500 text-white shadow-lg shadow-pink-500/15"
@@ -1323,10 +1796,14 @@ export default function App() {
                               return (
                                 <button
                                   key={i}
-                                  onClick={() => {
+                                  onClick={async () => {
                                     if (dayFile) {
+                                      const tree = flushEditor();
+                                      if (username) {
+                                        await syncWithServer(tree);
+                                      }
                                       setCurrentFileId(dayFile.id);
-                                      setCurrentTab("editor");
+                                      await changeTab("editor");
                                     }
                                   }}
                                   className={`py-1 rounded-md flex flex-col items-center justify-center min-h-[44px] transition-all relative cursor-pointer ${
@@ -1363,6 +1840,10 @@ export default function App() {
                       onInjectSticker={handleInjectSticker}
                       onInsertCodeBlock={handleInsertCodeBlock}
                       onInsertTemplate={handleInsertTemplate}
+                      onUndo={handleUndo}
+                      onRedo={handleRedo}
+                      onSave={handleManualSave}
+                      saveStatus={saveStatus}
                     />
 
                     {/* Paper Stage workspace background */}
@@ -1532,20 +2013,20 @@ export default function App() {
                                     <select
                                       value={currentFile.mood || "😊"}
                                       onChange={(e) => handleUpdateMood(e.target.value)}
-                                      className="bg-transparent border border-zinc-900/10 rounded px-1 text-inherit cursor-pointer"
+                                      className="bg-black/5 dark:bg-white/10 backdrop-blur-md border border-zinc-900/20 dark:border-zinc-700/30 rounded px-2 py-0.5 text-inherit cursor-pointer outline-none transition-all duration-200"
                                     >
-                                      <option value="😊">Joy 😊</option>
-                                      <option value="💻">Code 💻</option>
-                                      <option value="🌌">Zen 🌌</option>
-                                      <option value="⚡">Chaos ⚡</option>
-                                      <option value="😭">Sad 😭</option>
-                                      <option value="🤯">Mindblown 🤯</option>
-                                      <option value="😡">Angry 😡</option>
-                                      <option value="😴">Tired 😴</option>
-                                      <option value="🥳">Excited 🥳</option>
-                                      <option value="🤔">Thinking 🤔</option>
-                                      <option value="🥰">Loved 🥰</option>
-                                      <option value="🤢">Sick 🤢</option>
+                                      <option className="bg-zinc-900 text-white" value="😊">Joy 😊</option>
+                                      <option className="bg-zinc-900 text-white" value="💻">Code 💻</option>
+                                      <option className="bg-zinc-900 text-white" value="🌌">Zen 🌌</option>
+                                      <option className="bg-zinc-900 text-white" value="⚡">Chaos ⚡</option>
+                                      <option className="bg-zinc-900 text-white" value="😭">Sad 😭</option>
+                                      <option className="bg-zinc-900 text-white" value="🤯">Mindblown 🤯</option>
+                                      <option className="bg-zinc-900 text-white" value="😡">Angry 😡</option>
+                                      <option className="bg-zinc-900 text-white" value="😴">Tired 😴</option>
+                                      <option className="bg-zinc-900 text-white" value="🥳">Excited 🥳</option>
+                                      <option className="bg-zinc-900 text-white" value="🤔">Thinking 🤔</option>
+                                      <option className="bg-zinc-900 text-white" value="🥰">Loved 🥰</option>
+                                      <option className="bg-zinc-900 text-white" value="🤢">Sick 🤢</option>
                                     </select>
                                   </div>
                                   <div className="flex items-center gap-1">
@@ -1553,14 +2034,14 @@ export default function App() {
                                     <select
                                       value={currentFile.weather || "Sunny ☀️"}
                                       onChange={(e) => handleUpdateWeather(e.target.value)}
-                                      className="bg-transparent border border-zinc-900/10 rounded px-1 text-inherit cursor-pointer"
+                                      className="bg-black/5 dark:bg-white/10 backdrop-blur-md border border-zinc-900/20 dark:border-zinc-700/30 rounded px-2 py-0.5 text-inherit cursor-pointer outline-none transition-all duration-200"
                                     >
-                                      <option value="Sunny ☀️">Sunny ☀️</option>
-                                      <option value="Rainy 🌧️">Rainy 🌧️</option>
-                                      <option value="Windy 🍃">Windy 🍃</option>
-                                      <option value="Cloudy ☁️">Cloudy ☁️</option>
-                                      <option value="Snowy ❄️">Snowy ❄️</option>
-                                      <option value="Stormy ⛈️">Stormy ⛈️</option>
+                                      <option className="bg-zinc-900 text-white" value="Sunny ☀️">Sunny ☀️</option>
+                                      <option className="bg-zinc-900 text-white" value="Rainy 🌧️">Rainy 🌧️</option>
+                                      <option className="bg-zinc-900 text-white" value="Windy 🍃">Windy 🍃</option>
+                                      <option className="bg-zinc-900 text-white" value="Cloudy ☁️">Cloudy ☁️</option>
+                                      <option className="bg-zinc-900 text-white" value="Snowy ❄️">Snowy ❄️</option>
+                                      <option className="bg-zinc-900 text-white" value="Stormy ⛈️">Stormy ⛈️</option>
                                     </select>
                                   </div>
                                 </div>
@@ -1608,14 +2089,74 @@ export default function App() {
                                   <ImageIcon className="w-3.5 h-3.5" /> Reference Snapshot
                                   <input type="file" accept="image/*" onChange={handleImageAttachment} className="hidden" />
                                 </label>
+
+                                <button
+                                  onClick={handleManualSave}
+                                  className={`px-3.5 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-all shrink-0 cursor-pointer font-sans ${
+                                    saveStatus === "saving"
+                                      ? "bg-amber-500 text-black font-bold animate-pulse"
+                                      : saveStatus === "saved"
+                                        ? "bg-green-600 text-white font-bold scale-105"
+                                        : "bg-emerald-600 hover:bg-emerald-500 text-white shadow-md shadow-emerald-900/10"
+                                  }`}
+                                  title="Immediate Save (Ctrl+S)"
+                                >
+                                  {saveStatus === "saving" ? (
+                                    <>
+                                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                      <span>Saving...</span>
+                                    </>
+                                  ) : saveStatus === "saved" ? (
+                                    <>
+                                      <span>✓</span>
+                                      <span>Saved!</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <Save className="w-3.5 h-3.5" />
+                                      <span>Save Now</span>
+                                    </>
+                                  )}
+                                </button>
+
+                                <div className="ml-auto flex items-center gap-1.5 font-mono text-[10px] select-none bg-zinc-900/10 dark:bg-white/5 px-2.5 py-1 rounded border border-zinc-900/5 dark:border-zinc-700/10">
+                                  <span className={`w-2 h-2 rounded-full ${
+                                    saveStatus === "saving" 
+                                      ? "bg-orange-400 animate-pulse" 
+                                      : saveStatus === "saved" 
+                                        ? "bg-green-400 scale-125" 
+                                        : "bg-emerald-400"
+                                  }`}></span>
+                                  <span className={
+                                    saveStatus === "saving" 
+                                      ? "text-orange-400 font-medium" 
+                                      : saveStatus === "saved" 
+                                        ? "text-green-400 font-bold" 
+                                        : "text-zinc-400 dark:text-zinc-300"
+                                  }>
+                                    {saveStatus === "saving" 
+                                      ? "Saving..." 
+                                      : saveStatus === "saved" 
+                                        ? "✓ Saved to Vault" 
+                                        : "Synced with Vault"}
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="hidden">
+                                <label>
+                                </label>
                               </div>
 
                               {/* Main Editable content area */}
                               <div
                                 ref={editorRef}
                                 id="editorEngine"
-                                contentEditable={!isMarkdownMode}
+                                contentEditable={!isMarkdownMode && !(currentFile?.isLocked && !decryptedMemStore[currentFile?.id || ""])}
                                 onInput={handleEditorInput}
+                                onBlur={() => {
+                                  // 🛡️ Force immediate sync the moment focus leaves the editor (clicking sidebar, switching tabs, etc.)
+                                  handleEditorInput();
+                                }}
                                 style={{ minHeight: "450px" }}
                                 className="outline-none text-base leading-relaxed whitespace-pre-wrap word-break"
                               />
@@ -1703,12 +2244,33 @@ export default function App() {
                                 <span className="text-xs font-bold font-mono text-zinc-400 flex items-center gap-1.5 tracking-wider font-sans">
                                   <Users className="w-4 h-4 text-pink-500" /> UNIVERSE CHARACTERS
                                 </span>
-                                <button
-                                  onClick={handleAddCharacter}
-                                  className="px-2.5 py-1 bg-pink-500 hover:bg-pink-600 text-white rounded-lg text-[9px] font-bold tracking-wider cursor-pointer shrink-0 transition-colors font-sans"
-                                >
-                                  + ADD
-                                </button>
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    onClick={async () => {
+                                      const tree = flushEditor();
+                                      setSaveStatus("saving");
+                                      const success = await syncWithServer(tree);
+                                      if (success) {
+                                        setSaveStatus("saved");
+                                        setTimeout(() => {
+                                          setSaveStatus((current) => current === "saved" ? "synced" : current);
+                                        }, 2000);
+                                      } else {
+                                        setSaveStatus("idle");
+                                      }
+                                    }}
+                                    className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg text-[9px] font-bold tracking-wider cursor-pointer shrink-0 transition-colors font-sans flex items-center gap-1"
+                                    title="Force immediate save of all character alignments"
+                                  >
+                                    <Save className="w-2.5 h-2.5 text-zinc-400" /> SAVE ALL
+                                  </button>
+                                  <button
+                                    onClick={handleAddCharacter}
+                                    className="px-2.5 py-1 bg-pink-500 hover:bg-pink-600 text-white rounded-lg text-[9px] font-bold tracking-wider cursor-pointer shrink-0 transition-colors font-sans"
+                                  >
+                                    + ADD
+                                  </button>
+                                </div>
                               </div>
 
                               <div className="space-y-4 max-h-[480px] overflow-y-auto pr-1 scrollbar-thin">
@@ -1814,13 +2376,13 @@ export default function App() {
                 initialDataUrl={currentFile?.attached_image}
                 onSaveDoodle={(base64) => {
                   if (currentFileId) {
-                    setVFileSystem((prev) => {
+                    setSaveStatus("saving");
+                    setVFileSystemAndSync((prev) => {
                       const next = cloneFileSystem(prev);
                       const target = findNodeRecursive(next, currentFileId) as JournalFile;
                       if (target) {
                         target.attached_image = base64;
                       }
-                      syncWithServer(next);
                       return next;
                     });
                   }
