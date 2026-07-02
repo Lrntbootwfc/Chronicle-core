@@ -5,6 +5,17 @@ export interface Sticker {
   transform: string;
 }
 
+export interface ComicPage {
+  page_number: number;
+  image_data_url: string;
+  panels: any[];
+  panel_count: number;
+  fallback: boolean;
+  prompt?: string;
+  used_storyboard_fallback?: boolean;
+  panels_with_placeholder_image?: number;
+}
+
 export interface JournalFile {
   id: string;
   type: "file";
@@ -15,6 +26,10 @@ export interface JournalFile {
   created: string;
   edited: string;
   comic: string;
+  comic_pages?: ComicPage[];
+  story_understanding?: any;
+  character_sheets?: any;
+  quality_control_logs?: any[];
   stickers: Sticker[];
   attached_image?: string;
   password?: string; // AES password or individual file lock password

@@ -15,9 +15,27 @@ import InsightsDashboard from "./components/InsightsDashboard";
 import ComicStudio from "./components/ComicStudio";
 import Messenger from "./components/Messenger";
 import MediaLedger from "./components/MediaLedger";
+import { MultiAgentControlPanel } from "./components/MultiAgentControlPanel";
 import { API_BASE_URL } from "./config";
+import { downloadAsPng, convertSvgToPngIfNeeded } from "./lib/imageUtils";
 
 // File system recursive operations
+const decodeSvg = (dataUrl: string): string => {
+  try {
+    if (!dataUrl || !dataUrl.includes(",")) return "";
+    const base64 = dataUrl.split(",")[1];
+    const binary = atob(base64);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+    return new TextDecoder("utf-8").decode(bytes);
+  } catch (e) {
+    console.error("Failed to decode SVG", e);
+    return "";
+  }
+};
+
 const findNodeRecursive = (nodes: JournalNode[], id: string): JournalNode | null => {
   for (let node of nodes) {
     if (node.id === id) return node;
@@ -44,6 +62,29 @@ const removeNodeRecursive = (nodes: JournalNode[], id: string): JournalNode | nu
 
 const cloneFileSystem = (nodes: JournalNode[]): JournalNode[] => {
   return JSON.parse(JSON.stringify(nodes));
+};
+
+const safeLocalStorageSetItem = (key: string, value: string) => {
+  try {
+    localStorage.setItem(key, value);
+  } catch (error: any) {
+    console.warn(`[Safe Storage] Failed to write key "${key}" to localStorage:`, error);
+    if (error.name === "QuotaExceededError" || error.code === 22) {
+      try {
+        // Purge individual rehydrate caches to free up space
+        for (let i = localStorage.length - 1; i >= 0; i--) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith("rehydrate_file_")) {
+            localStorage.removeItem(k);
+          }
+        }
+        localStorage.setItem(key, value);
+        console.log(`[Safe Storage] Recovered and successfully saved key "${key}" after cache purge.`);
+      } catch (innerError) {
+        console.warn(`[Safe Storage] Hard quota limit exceeded. Relying purely on cloud database persistence.`, innerError);
+      }
+    }
+  }
 };
 
 export default function App() {
@@ -152,9 +193,9 @@ export default function App() {
   // Persist current active file ID & tab to localStorage across page refreshes (F5)
   useEffect(() => {
     if (currentFileId) {
-      localStorage.setItem("comic_diary_current_file_id", currentFileId);
+      safeLocalStorageSetItem("comic_diary_current_file_id", currentFileId);
     }
-    localStorage.setItem("comic_diary_current_tab", currentTab);
+    safeLocalStorageSetItem("comic_diary_current_tab", currentTab);
   }, [currentFileId, currentTab]);
 
   // Editor states
@@ -255,7 +296,7 @@ export default function App() {
       if (currentTab === "editor" && editorRef.current && currentFileId) {
         const rawHTML = editorRef.current.innerHTML;
         if (rawHTML && !rawHTML.includes("[Content Blocked - Enter Passkey]")) {
-          localStorage.setItem(`rehydrate_file_${currentFileId}`, rawHTML);
+          safeLocalStorageSetItem(`rehydrate_file_${currentFileId}`, rawHTML);
         }
       }
     };
@@ -316,7 +357,7 @@ export default function App() {
   ): Promise<boolean> => {
     if (!username) return false;
     setSaveStatus("saving");
-    localStorage.setItem("comic_diary_fs_tree", JSON.stringify(updatedFS));
+    safeLocalStorageSetItem("comic_diary_fs_tree", JSON.stringify(updatedFS));
     try {
       const response = await fetch(`${API_BASE_URL}/api/save`, {
         method: "POST",
@@ -431,9 +472,9 @@ export default function App() {
       let flushed = vFileSystemRef.current;
       if (editorRef.current && currentFileId) {
         const html = editorRef.current.innerHTML;
-        localStorage.setItem(`rehydrate_file_${currentFileId}`, html);
+        safeLocalStorageSetItem(`rehydrate_file_${currentFileId}`, html);
         flushed = getFlushedTree();
-        localStorage.setItem("comic_diary_fs_tree", JSON.stringify(flushed));
+        safeLocalStorageSetItem("comic_diary_fs_tree", JSON.stringify(flushed));
       }
 
       if (username) {
@@ -817,8 +858,8 @@ export default function App() {
     setUsername(data.username);
     setVFileSystem(data.fs_tree || []);
     lastSavedTreeJsonRef.current = JSON.stringify(data.fs_tree || []);
-    localStorage.setItem("comic_diary_username", data.username);
-    localStorage.setItem("comic_diary_fs_tree", JSON.stringify(data.fs_tree || []));
+    safeLocalStorageSetItem("comic_diary_username", data.username);
+    safeLocalStorageSetItem("comic_diary_fs_tree", JSON.stringify(data.fs_tree || []));
 
     setPersonalization(prev => {
       const next = { 
@@ -828,7 +869,7 @@ export default function App() {
         motherDesc: data.mother_desc !== undefined ? data.mother_desc : prev.motherDesc,
         othersDesc: data.others_desc !== undefined ? data.others_desc : prev.othersDesc
       };
-      localStorage.setItem("comic_diary_personalization", JSON.stringify(next));
+      safeLocalStorageSetItem("comic_diary_personalization", JSON.stringify(next));
       return next;
     });
     setRoute("workspace");
@@ -839,7 +880,7 @@ export default function App() {
   const handleUpdatePersonalization = (updates: Partial<Personalization>) => {
     setPersonalization((prev) => {
       const next = { ...prev, ...updates };
-      localStorage.setItem("comic_diary_personalization", JSON.stringify(next));
+      safeLocalStorageSetItem("comic_diary_personalization", JSON.stringify(next));
       
       // Debounce the server synchronization so it works smoothly on typing
       if (personalizationDebounceRef.current) {
@@ -909,8 +950,8 @@ export default function App() {
         }
         file.edited = new Date().toLocaleString();
         // Layer 1: Instant local storage cache (synchronous)
-        localStorage.setItem(`rehydrate_file_${file.id}`, rawHTML);
-        localStorage.setItem("comic_diary_fs_tree", JSON.stringify(updated));
+        safeLocalStorageSetItem(`rehydrate_file_${file.id}`, rawHTML);
+        safeLocalStorageSetItem("comic_diary_fs_tree", JSON.stringify(updated));
         // Layer 2: Debounced background server sync
         if (saveDebounceRef.current) {
           clearTimeout(saveDebounceRef.current);
@@ -933,7 +974,7 @@ export default function App() {
     }
 
     const html = editorRef.current.innerHTML;
-    localStorage.setItem(`rehydrate_file_${currentFileId}`, html);
+    safeLocalStorageSetItem(`rehydrate_file_${currentFileId}`, html);
     const updated = getFlushedTree();
     setVFileSystem(updated);
     return updated;
@@ -942,7 +983,7 @@ export default function App() {
   const changeTab = async (tab: "dashboard" | "editor" | "comic-book" | "insights" | "communications" | "media-ledger") => {
     const tree = flushEditor();
     if (username) {
-      await syncWithServer(tree);
+      syncWithServer(tree);
     }
     setCurrentTab(tab);
   };
@@ -978,8 +1019,8 @@ export default function App() {
       }
       file.edited = new Date().toLocaleString();
 
-      localStorage.setItem(`rehydrate_file_${file.id}`, html);
-      localStorage.setItem("comic_diary_fs_tree", JSON.stringify(updated));
+      safeLocalStorageSetItem(`rehydrate_file_${file.id}`, html);
+      safeLocalStorageSetItem("comic_diary_fs_tree", JSON.stringify(updated));
       
       setVFileSystem(updated);
     }
@@ -1026,7 +1067,7 @@ export default function App() {
   const handleSelectFile = async (id: string) => {
     const tree = flushEditor();
     if (username) {
-      await syncWithServer(tree);
+      syncWithServer(tree);
     }
     const latestTreeValue = vFileSystemRef.current;
     const node = findNodeRecursive(latestTreeValue, id) as JournalFile;
@@ -1044,14 +1085,14 @@ export default function App() {
             node.isLocked = true; 
             node.password = pass; // Store temporary key
             setCurrentFileId(id);
-            await changeTab("editor");
+            changeTab("editor");
           } catch (e) {
             alert("Security Decryption Failed. Block remains encrypted.");
           }
         }
       } else {
         setCurrentFileId(id);
-        await changeTab("editor");
+        changeTab("editor");
       }
     }
   };
@@ -1387,7 +1428,8 @@ export default function App() {
   };
 
   // CORE DAILY COMIC GENERATION PIPELINE
-  const triggerAICohesiveComic = async () => {
+  const triggerAICohesiveComic = async (pageNumberToRegenInput?: number | unknown) => {
+    const pageNumberToRegen = typeof pageNumberToRegenInput === "number" ? pageNumberToRegenInput : undefined;
     if (!currentFileId) return alert("Select an active document first!");
     const file = findNodeRecursive(vFileSystem, currentFileId) as JournalFile;
     if (!file) return;
@@ -1396,49 +1438,70 @@ export default function App() {
     if (!textToAnalyze) return alert("Write down text content before generating comic images.");
 
     setGeneratingComic(true);
+    console.log(`Starting comic generation (Page: ${pageNumberToRegen || "All"}) — this takes 60-120 seconds...`);
 
     try {
-      const fileChars = (file.characters || []).map(c => `${c.name} (${c.role}): ${c.desc}`).join(", ");
-      const universeCharsGuideline = fileChars ? ` Active scene characters: ${fileChars}.` : "";
-
-      const charGuidelines = `Main character profile: ${personalization.avatarDesc || "classic character"}. ` +
-        (personalization.fatherDesc ? `Father character: ${personalization.fatherDesc}. ` : "") +
-        (personalization.motherDesc ? `Mother character: ${personalization.motherDesc}. ` : "") +
-        (personalization.othersDesc ? `Other character alignments: ${personalization.othersDesc}. ` : "") +
-        universeCharsGuideline;
-
-      const customPrompt = `Indie comic book panel cell, high contrast linework style, vibrant graphic colors. Scene details based on diary: "${textToAnalyze}". Character references guidelines: ${charGuidelines}. Ambient atmosphere style.`;
-
-      const response = await fetch(`${API_BASE_URL}/api/render-comic`, {
+      const response = await fetch(`${API_BASE_URL}/api/render-comic-pages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           username,
-          prompt: customPrompt,
           content: textToAnalyze,
-          avatar_desc: personalization.avatarDesc,
-          father_desc: personalization.fatherDesc,
-          mother_desc: personalization.motherDesc,
-          others_desc: personalization.othersDesc,
           mood: file.mood || "😊",
-          image_seed: file.attached_image || ""
+          entry_characters: file.characters || [],
+          avatar_desc: personalization.avatarDesc || "",
+          global_alignments: {
+            father: personalization.fatherDesc || "",
+            mother: personalization.motherDesc || "",
+            others: personalization.othersDesc || ""
+          },
+          image_seed: file.attached_image || "",
+          page_number_to_regen: pageNumberToRegen,
+          existing_pages: file.comic_pages || [],
+          existing_quality_logs: file.quality_control_logs || [],
+          story_understanding: file.story_understanding || null,
+          character_sheets: file.character_sheets || null
         })
       });
 
       const data = await response.json();
-      if (data.image_data_url) {
+      if (data.pages && data.pages.length > 0) {
         setSaveStatus("saving");
+
+        if (data.gemini_quota_exceeded) {
+          console.warn("Gemini API Free Tier quota reached. Falling back to offline layout generator.");
+          alert("Notice: Your Gemini API free tier quota limit has been reached (or is rate-limited). To prevent any interruption, the Comic Diary has seamlessly generated high-fidelity offline layout frames for your comic pages!");
+        }
+        
+        // Convert any SVG pages to high-quality PNGs asynchronously
+        const processedPages = await Promise.all(
+          data.pages.map(async (page: any) => {
+            const pngUrl = await convertSvgToPngIfNeeded(page.image_data_url);
+            return {
+              ...page,
+              image_data_url: pngUrl
+            };
+          })
+        );
+
         setVFileSystemAndSync((prev) => {
           const next = cloneFileSystem(prev);
           const target = findNodeRecursive(next, currentFileId) as JournalFile;
           if (target) {
-            target.comic = data.image_data_url;
+            target.comic_pages = processedPages;
+            target.comic = processedPages[0]?.image_data_url || "";
+            target.story_understanding = data.story_understanding;
+            target.character_sheets = data.character_sheets;
+            target.quality_control_logs = data.quality_control_logs;
           }
           return next;
         });
+      } else {
+        alert("Illustrator processing returned no pages.");
       }
     } catch (e) {
-      alert("Illustrator processing handshake timed out.");
+      console.error("Comic generation error:", e);
+      alert(`Comic generation failed: ${e instanceof Error ? e.message : "Network error. The pipeline takes 60-120 seconds — please try again."}`);
     } finally {
       setGeneratingComic(false);
     }
@@ -1796,14 +1859,14 @@ export default function App() {
                               return (
                                 <button
                                   key={i}
-                                  onClick={async () => {
+                                  onClick={() => {
                                     if (dayFile) {
                                       const tree = flushEditor();
                                       if (username) {
-                                        await syncWithServer(tree);
+                                        syncWithServer(tree);
                                       }
                                       setCurrentFileId(dayFile.id);
-                                      await changeTab("editor");
+                                      changeTab("editor");
                                     }
                                   }}
                                   className={`py-1 rounded-md flex flex-col items-center justify-center min-h-[44px] transition-all relative cursor-pointer ${
@@ -2171,7 +2234,7 @@ export default function App() {
                                     <p className="text-[10px] opacity-60 font-mono">AI pipeline translates decrypted text logs into 2D comic panels</p>
                                   </div>
                                   <button
-                                    onClick={triggerAICohesiveComic}
+                                    onClick={() => triggerAICohesiveComic()}
                                     disabled={generatingComic}
                                     className="px-4 py-2 bg-orange-500 hover:bg-orange-600 disabled:bg-zinc-800 disabled:text-slate-500 text-black font-semibold text-xs rounded-xl flex items-center gap-2 cursor-pointer font-sans"
                                   >
@@ -2184,20 +2247,84 @@ export default function App() {
                                   </button>
                                 </div>
 
-                                {currentFile.comic && (
-                                  <div className="relative rounded-xl overflow-hidden border-4 border-black bg-white p-4 shadow-xl shadow-black/10 text-center">
-                                    <h5 className="text-black font-display font-bold text-xs pb-2 border-b border-zinc-100">PANEL OUTLINE</h5>
-                                    <img src={currentFile.comic} alt="Generated Panel" className="max-h-96 mx-auto rounded-lg object-contain" />
-                                    <a
-                                      href={currentFile.comic}
-                                      download={`Comic_Panel_${currentFile.name.replace(/\s+/g, "_")}.png`}
-                                      className="absolute bottom-4 right-4 p-2 rounded-full bg-black hover:bg-black/90 text-orange-400 hover:text-orange-300 shadow-lg border border-zinc-800"
-                                    >
-                                      <ImageIcon className="w-4 h-4" />
-                                    </a>
-                                  </div>
+                                 {currentFile.comic_pages && currentFile.comic_pages.length > 0 ? (
+                                   <div className="space-y-6">
+                                     {currentFile.comic_pages.map((page, index) => (
+                                       <div key={page.page_number || index} className="relative rounded-xl overflow-hidden border-4 border-black bg-white p-4 shadow-xl shadow-black/10 text-center">
+                                         <div className="flex items-center justify-between pb-2 border-b border-zinc-100 mb-3">
+                                           <div className="flex items-center gap-2">
+                                             <h5 className="text-black font-display font-black text-xs uppercase tracking-wider">PAGE {page.page_number} OF {currentFile.comic_pages?.length}</h5>
+                                             {page.used_storyboard_fallback && (
+                                               <span className="px-1.5 py-0.5 text-[8px] bg-red-100 text-red-700 rounded font-bold uppercase font-mono" title="A safe structural fallback was used for this page layout due to complex text prompt structure.">Storyboard Fallback</span>
+                                             )}
+                                           </div>
+                                           <div className="flex items-center gap-2">
+                                             {page.panels_with_placeholder_image > 0 ? (
+                                               <div className="flex items-center gap-1.5 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-lg text-amber-800 text-[10px] font-sans">
+                                                 <span>⚠️ {page.panels_with_placeholder_image} placeholder {page.panels_with_placeholder_image === 1 ? "panel" : "panels"}</span>
+                                                 <button
+                                                   onClick={() => triggerAICohesiveComic(page.page_number)}
+                                                   disabled={generatingComic}
+                                                   className="px-2 py-0.5 bg-amber-600 hover:bg-amber-700 disabled:bg-zinc-300 disabled:text-zinc-500 text-white font-bold rounded text-[9px] cursor-pointer transition-colors"
+                                                 >
+                                                   {generatingComic ? "Regenerating..." : "Regenerate"}
+                                                 </button>
+                                               </div>
+                                             ) : (
+                                               <button
+                                                 onClick={() => triggerAICohesiveComic(page.page_number)}
+                                                 disabled={generatingComic}
+                                                 className="px-2 py-0.5 bg-zinc-100 hover:bg-zinc-200 disabled:bg-zinc-100 text-zinc-700 border border-zinc-200 font-bold rounded text-[9px] cursor-pointer transition-colors"
+                                                 title="Regenerate this specific page using the consistent storyboard"
+                                               >
+                                                 {generatingComic ? "Regenerating..." : "Regenerate"}
+                                               </button>
+                                             )}
+                                             <span className="px-2 py-0.5 rounded bg-orange-100 text-orange-700 text-[10px] font-mono font-bold">{page.panel_count} Panels</span>
+                                           </div>
+                                         </div>
+                                         <div className="w-full max-w-full mx-auto rounded-lg overflow-hidden border border-zinc-200 shadow-sm bg-[#FAF5EB]">
+                                           <img 
+                                             src={page.image_data_url} 
+                                             alt={`Generated Comic Page ${page.page_number}`} 
+                                             className="w-full h-auto max-h-[800px] object-contain block mx-auto"
+                                             referrerPolicy="no-referrer"
+                                           />
+                                         </div>
+                                         <button
+                                           onClick={() => downloadAsPng(page.image_data_url, `Comic_Page_${page.page_number}_${currentFile.name.replace(/\s+/g, "_")}.png`)}
+                                           className="absolute bottom-4 right-4 p-2 rounded-full bg-black hover:bg-black/90 text-orange-400 hover:text-orange-300 shadow-lg border border-zinc-800 cursor-pointer flex items-center justify-center"
+                                           title={`Download Page ${page.page_number}`}
+                                         >
+                                           <ImageIcon className="w-4 h-4" />
+                                         </button>
+                                       </div>
+                                     ))}
+                                   </div>
+                                ) : (
+                                  currentFile.comic && (
+                                    <div className="relative rounded-xl overflow-hidden border-4 border-black bg-white p-4 shadow-xl shadow-black/10 text-center">
+                                      <h5 className="text-black font-display font-bold text-xs pb-2 border-b border-zinc-100">PANEL OUTLINE</h5>
+                                      <img src={currentFile.comic} alt="Generated Panel" className="max-h-96 mx-auto rounded-lg object-contain" />
+                                      <button
+                                        onClick={() => downloadAsPng(currentFile.comic, `Comic_Panel_${currentFile.name.replace(/\s+/g, "_")}.png`)}
+                                        className="absolute bottom-4 right-4 p-2 rounded-full bg-black hover:bg-black/90 text-orange-400 hover:text-orange-300 shadow-lg border border-zinc-800 cursor-pointer"
+                                        title="Download Panel Outline"
+                                      >
+                                        <ImageIcon className="w-4 h-4" />
+                                      </button>
+                                    </div>
+                                  )
                                 )}
                               </div>
+
+                              {/* Multi-Agent Control Panel traces & logs */}
+                              <MultiAgentControlPanel
+                                storyUnderstanding={currentFile.story_understanding}
+                                characterSheets={currentFile.character_sheets}
+                                qualityControlLogs={currentFile.quality_control_logs}
+                                comicPages={currentFile.comic_pages}
+                              />
 
                             </div>
 
